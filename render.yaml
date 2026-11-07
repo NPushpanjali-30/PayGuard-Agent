@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: payguard-agent
+    env: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: PAYPAL_MODE
+        value: mock
+      - key: APP_PASSWORD
+        generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: APPROVAL_LIMIT
+        value: "500"
+      - key: HARD_LIMIT
+        value: "5000"
+      - key: DB_PATH
+        value: /tmp/payguard.db
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash

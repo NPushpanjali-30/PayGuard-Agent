@@ -1,0 +1,63 @@
+{
+  "name": "payguard-agent",
+  "version": "1.0.0",
+  "description": "An AI agent that checks payment-request emails against your PayPal payment history, holds anything suspicious, and only sends money after a human approves.",
+  "main": "dist/server/index.js",
+  "scripts": {
+    "dev:server": "tsx watch src/server/index.ts",
+    "dev:web": "vite web",
+    "dev": "tsx watch src/server/index.ts",
+    "build:web": "vite build web --outDir ../dist/web",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build": "npm run build:server && npm run build:web",
+    "start": "node dist/server/index.js",
+    "typecheck": "tsc --noEmit && tsc -p web/tsconfig.json --noEmit",
+    "layers": "tsx scripts/check-layers.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "seed": "tsx scripts/seed.ts",
+    "eval": "tsx scripts/eval.ts",
+    "smoke:sandbox": "tsx scripts/smoke-sandbox.ts"
+  },
+  "keywords": [
+    "paypal",
+    "ai",
+    "gemini",
+    "security",
+    "agentic-commerce",
+    "fraud-prevention"
+  ],
+  "author": "PayGuard Agent Team",
+  "license": "MIT",
+  "dependencies": {
+    "@google/genai": "^0.2.0",
+    "better-sqlite3": "^11.8.1",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/cookie-parser": "^1.4.8",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.7",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@types/supertest": "^6.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "rimraf": "^6.0.1",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}

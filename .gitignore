@@ -1,0 +1,8 @@
+node_modules/
+dist/
+data/*.db*
+!data/eval/
+!data/eval/emails.jsonl
+.env
+.DS_Store
+*.log

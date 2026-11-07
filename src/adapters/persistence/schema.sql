@@ -1,0 +1,62 @@
+CREATE TABLE IF NOT EXISTS vendors (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  paypal_emails TEXT NOT NULL,
+  domains TEXT NOT NULL,
+  phone TEXT,
+  typical_amount REAL NOT NULL DEFAULT 0,
+  payment_count INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS proposals (
+  id TEXT PRIMARY KEY,
+  vendor_id TEXT,
+  vendor_name TEXT NOT NULL,
+  amount REAL NOT NULL,
+  currency TEXT NOT NULL,
+  payee TEXT NOT NULL,
+  requested_payee_in_email TEXT,
+  verdict TEXT NOT NULL,
+  flags TEXT NOT NULL,
+  status TEXT NOT NULL,
+  requires_callback_check INTEGER NOT NULL DEFAULT 0,
+  requires_amount_confirm INTEGER NOT NULL DEFAULT 0,
+  is_hard_blocked INTEGER NOT NULL DEFAULT 0,
+  callback_confirmed INTEGER NOT NULL DEFAULT 0,
+  callback_note TEXT,
+  approval_note TEXT,
+  rejection_reason TEXT,
+  paypal_batch_id TEXT,
+  paypal_payout_item_id TEXT,
+  raw_email TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+  id TEXT PRIMARY KEY,
+  vendor_id TEXT NOT NULL,
+  payee_email TEXT NOT NULL,
+  amount REAL NOT NULL,
+  currency TEXT NOT NULL,
+  status TEXT NOT NULL,
+  paypal_batch_id TEXT,
+  paid_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id TEXT PRIMARY KEY,
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  target_id TEXT,
+  details TEXT NOT NULL,
+  timestamp TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status);
+CREATE INDEX IF NOT EXISTS idx_proposals_created ON proposals(created_at);
+CREATE INDEX IF NOT EXISTS idx_payments_vendor ON payments(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
