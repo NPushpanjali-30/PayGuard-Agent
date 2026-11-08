@@ -165,7 +165,7 @@ describe('PayPal Payout Error Handling & Simulated Fallback Flow', () => {
     expect(duplicateApprove.status).toBe(400);
     expect(duplicateApprove.body.error).toContain('must be PENDING_REVIEW');
 
-    // 6. Demonstrate user-initiated Mock Mode Fallback (Simulated Payout)
+    // 6. Demonstrate user-initiated Mock Mode Fallback (Simulated Payout via MockPayPalClient)
     const simRes = await request(app)
       .post(`/api/proposals/${proposal.id}/simulate-payout`)
       .set('Cookie', authCookie)
@@ -174,19 +174,20 @@ describe('PayPal Payout Error Handling & Simulated Fallback Flow', () => {
 
     expect(simRes.status).toBe(200);
     expect(simRes.body.status).toBe('PAID');
-    expect(simRes.body.paypalBatchId).toMatch(/^SIMULATED-MOCK-/);
+    expect(simRes.body.paypalBatchId).toMatch(/^SIMULATED-/);
 
     // Verify DB reflects PAID and SIMULATED batch ID
     const afterSim = repo.getProposalById(proposal.id);
     expect(afterSim!.status).toBe('PAID');
-    expect(afterSim!.paypalBatchId).toMatch(/^SIMULATED-MOCK-/);
+    expect(afterSim!.paypalBatchId).toMatch(/^SIMULATED-/);
 
     // Verify PAYMENT_SIMULATED audit log
     const updatedLogs = repo.getAuditLogs();
     const simLog = updatedLogs.find(l => l.action === 'PAYMENT_SIMULATED');
     expect(simLog).toBeDefined();
     expect(simLog!.details.simulated).toBe(true);
-    expect(simLog!.details.paypalBatchId).toMatch(/^SIMULATED-MOCK-/);
+    expect(simLog!.details.clientUsed).toBe('MockPayPalClient');
+    expect(simLog!.details.paypalBatchId).toMatch(/^SIMULATED-/);
     expect(simLog!.details.amount).toBe(450.0);
 
     // Attempting to simulate a second time is rejected
@@ -198,6 +199,49 @@ describe('PayPal Payout Error Handling & Simulated Fallback Flow', () => {
 
     expect(repeatSimRes.status).toBe(400);
     expect(repeatSimRes.body.error).toContain('already been paid');
+  });
+
+  it('handles GET /api/proposals/:id/approve by redirecting browsers and returning 405 for API clients', async () => {
+    const proposal = createProposal({ id: 'prop-get-test' });
+
+    // 1. Browser navigation (Accept: text/html) redirects to proposal detail page
+    const browserRes = await request(app)
+      .get(`/api/proposals/${proposal.id}/approve`)
+      .set('Cookie', authCookie)
+      .set('Accept', 'text/html');
+
+    expect(browserRes.status).toBe(302);
+    expect(browserRes.headers.location).toBe(`/proposals/${proposal.id}`);
+
+    // 2. API request (Accept: application/json) returns HTTP 405 Method Not Allowed
+    const apiRes = await request(app)
+      .get(`/api/proposals/${proposal.id}/approve`)
+      .set('Cookie', authCookie)
+      .set('Accept', 'application/json');
+
+    expect(apiRes.status).toBe(405);
+    expect(apiRes.body.error).toContain('Method Not Allowed');
+    expect(apiRes.body.allowedMethods).toEqual(['POST']);
+  });
+
+  it('handles GET /api/proposals/:id/simulate-payout gracefully', async () => {
+    const proposal = createProposal({ id: 'prop-sim-get-test' });
+
+    const browserRes = await request(app)
+      .get(`/api/proposals/${proposal.id}/simulate-payout`)
+      .set('Cookie', authCookie)
+      .set('Accept', 'text/html');
+
+    expect(browserRes.status).toBe(302);
+    expect(browserRes.headers.location).toBe(`/proposals/${proposal.id}`);
+
+    const apiRes = await request(app)
+      .get(`/api/proposals/${proposal.id}/simulate-payout`)
+      .set('Cookie', authCookie)
+      .set('Accept', 'application/json');
+
+    expect(apiRes.status).toBe(405);
+    expect(apiRes.body.error).toContain('Method Not Allowed');
   });
 
   it('rejects simulation if proposal has not been approved by a human', async () => {
@@ -214,5 +258,25 @@ describe('PayPal Payout Error Handling & Simulated Fallback Flow', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('has not been approved');
+  });
+
+  it('rejects simulation on HOLD proposals without vendor confirmation or callback', async () => {
+    const holdProposal = createProposal({
+      id: 'prop-hold-unconfirmed',
+      verdict: 'HOLD',
+      firstApprover: 'alice',
+      firstApprovedAt: new Date().toISOString(),
+      status: 'FAILED',
+      callbackConfirmed: false
+    });
+
+    const res = await request(app)
+      .post(`/api/proposals/${holdProposal.id}/simulate-payout`)
+      .set('Cookie', authCookie)
+      .set('X-PayGuard-Request', '1')
+      .send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('HOLD proposal requires verified vendor contact or callback note');
   });
 });

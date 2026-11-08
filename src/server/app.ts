@@ -116,6 +116,9 @@ export function createApp(customRepo?: SqliteRepository, customPayPalClient?: IP
     smtpFrom: config.SMTP_FROM
   });
 
+  const mockPayPalClient =
+    payPalClient instanceof MockPayPalClient ? payPalClient : new MockPayPalClient(0);
+
   const checkEmailUseCase = new CheckEmailUseCase(
     repository,
     emailReader,
@@ -128,7 +131,7 @@ export function createApp(customRepo?: SqliteRepository, customPayPalClient?: IP
   const updateVendorPayeeUseCase = new UpdateVendorPayeeUseCase(repository);
   const sendConfirmationUseCase = new SendConfirmationUseCase(repository, emailNotifier);
   const resolveConfirmationUseCase = new ResolveConfirmationUseCase(repository);
-  const simulatePayoutUseCase = new SimulatePayoutUseCase(repository);
+  const simulatePayoutUseCase = new SimulatePayoutUseCase(repository, mockPayPalClient);
 
   // 5. Unauthenticated Public Endpoints
   app.get('/health', (_req: Request, res: Response) => {
@@ -161,7 +164,8 @@ export function createApp(customRepo?: SqliteRepository, customPayPalClient?: IP
       rejectProposalUseCase,
       payPalClient,
       sendConfirmationUseCase,
-      simulatePayoutUseCase
+      simulatePayoutUseCase,
+      mockPayPalClient
     )
   );
   app.use(

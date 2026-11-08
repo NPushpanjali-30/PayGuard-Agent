@@ -278,13 +278,35 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
         </div>
       </div>
 
-      {proposal.status === 'PAID' && proposal.paypalBatchId?.startsWith('SIMULATED-MOCK-') && (
-        <div style={{ padding: '0.85rem 1.25rem', backgroundColor: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 'var(--radius)', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <span style={{ fontSize: '1.5rem' }}>⚡</span>
-          <div>
-            <div style={{ fontWeight: 700, color: '#1e40af' }}>SIMULATED / MOCK PAYOUT (DEMO MODE)</div>
-            <div style={{ fontSize: '0.85rem', color: '#1e3a8a', marginTop: '0.2rem' }}>
-              This payment was completed in Mock mode without sending live funds. PayPal Payout Batch ID: <code>{proposal.paypalBatchId}</code>.
+      {proposal.status === 'PAID' && (proposal.paypalBatchId?.startsWith('SIMULATED-') || proposal.paypalBatchId?.startsWith('MOCK-BATCH-')) && (
+        <div style={{ padding: '1rem 1.25rem', backgroundColor: '#eff6ff', border: '2px solid #3b82f6', borderRadius: 'var(--radius)', marginBottom: '1.25rem', display: 'flex', alignItems: 'flex-start', gap: '0.85rem' }}>
+          <span style={{ fontSize: '1.75rem', lineHeight: 1 }}>⚡</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: '1.1rem', color: '#1e40af', letterSpacing: '0.025em' }}>
+              SIMULATED PAYOUT (DEMO MODE)
+            </div>
+            <div style={{ fontSize: '0.875rem', color: '#1e3a8a', marginTop: '0.35rem', lineHeight: 1.5 }}>
+              This payment was executed in safe simulated mode using <strong>MockPayPalClient</strong>. No live PayPal funds were transferred because the real PayPal Sandbox account is country-restricted (403 PAYOUT_NOT_AVAILABLE).
+            </div>
+            <div style={{ marginTop: '0.6rem', display: 'flex', gap: '1.5rem', flexWrap: 'wrap', fontSize: '0.825rem' }}>
+              <div>
+                <span style={{ color: '#4b5563' }}>Transaction Reference:</span>{' '}
+                <code style={{ backgroundColor: '#dbeafe', padding: '0.15rem 0.4rem', borderRadius: '4px', fontWeight: 700, color: '#1d4ed8' }}>
+                  {proposal.paypalBatchId}
+                </code>
+              </div>
+              {proposal.paypalPayoutItemId && (
+                <div>
+                  <span style={{ color: '#4b5563' }}>Item Reference:</span>{' '}
+                  <code style={{ backgroundColor: '#dbeafe', padding: '0.15rem 0.4rem', borderRadius: '4px', fontWeight: 600, color: '#1d4ed8' }}>
+                    {proposal.paypalPayoutItemId}
+                  </code>
+                </div>
+              )}
+              <div>
+                <span style={{ color: '#4b5563' }}>Audit Action:</span>{' '}
+                <span style={{ fontWeight: 700, color: '#16a34a' }}>PAYMENT_SIMULATED</span>
+              </div>
             </div>
           </div>
         </div>
@@ -427,6 +449,32 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
                   {proposal.payee}
                 </div>
               </div>
+
+              {proposal.paypalBatchId && (
+                <div>
+                  <strong>
+                    {proposal.paypalBatchId.startsWith('SIMULATED-') || proposal.paypalBatchId.startsWith('MOCK-')
+                      ? '⚡ Simulated Batch Reference:'
+                      : 'PayPal Batch ID:'}
+                  </strong>{' '}
+                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--primary)', fontWeight: 600 }}>
+                    {proposal.paypalBatchId}
+                  </span>
+                </div>
+              )}
+
+              {proposal.paypalPayoutItemId && (
+                <div>
+                  <strong>
+                    {proposal.paypalBatchId?.startsWith('SIMULATED-') || proposal.paypalBatchId?.startsWith('MOCK-')
+                      ? '⚡ Simulated Item Reference:'
+                      : 'PayPal Item ID:'}
+                  </strong>{' '}
+                  <span style={{ fontFamily: 'var(--font-mono)' }}>
+                    {proposal.paypalPayoutItemId}
+                  </span>
+                </div>
+              )}
 
               {proposal.requestedPayeeInEmail && (
                 <div style={{ padding: '0.6rem', backgroundColor: 'var(--danger-subtle)', borderRadius: 'var(--radius)', border: '1px solid var(--danger-border)' }}>

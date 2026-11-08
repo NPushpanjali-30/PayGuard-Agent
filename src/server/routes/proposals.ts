@@ -16,7 +16,8 @@ export function createProposalsRouter(
   rejectUseCase: RejectProposalUseCase,
   payPalClient: IPayPalClient,
   sendConfirmationUseCase?: SendConfirmationUseCase,
-  simulatePayoutUseCase?: SimulatePayoutUseCase
+  simulatePayoutUseCase?: SimulatePayoutUseCase,
+  mockPayPalClient?: IPayPalClient
 ): Router {
   const router = Router();
 
@@ -39,6 +40,33 @@ export function createProposalsRouter(
       ...proposal,
       confirmation,
       vendorContactEmail: vendor?.contactEmail || null
+    });
+  });
+
+  // 2b. Handle GET /:id/approve
+  // In the web app, approval must be a state-changing POST request with anti-CSRF protection.
+  // When accessed via browser navigation, gracefully redirect to the frontend proposal page.
+  // When requested by an API client, return informative 405 Method Not Allowed JSON.
+  router.get('/:id/approve', (req: Request, res: Response) => {
+    if (req.accepts('html') && !req.xhr && !req.headers['x-payguard-request']) {
+      return res.redirect(`/proposals/${req.params.id}`);
+    }
+    res.status(405).json({
+      error: 'Method Not Allowed. Proposal approval must be executed via HTTP POST /api/proposals/:id/approve.',
+      proposalId: req.params.id,
+      allowedMethods: ['POST']
+    });
+  });
+
+  // 2c. Handle GET /:id/simulate-payout
+  router.get('/:id/simulate-payout', (req: Request, res: Response) => {
+    if (req.accepts('html') && !req.xhr && !req.headers['x-payguard-request']) {
+      return res.redirect(`/proposals/${req.params.id}`);
+    }
+    res.status(405).json({
+      error: 'Method Not Allowed. Simulated payout must be executed via HTTP POST /api/proposals/:id/simulate-payout.',
+      proposalId: req.params.id,
+      allowedMethods: ['POST']
     });
   });
 
@@ -153,7 +181,11 @@ export function createProposalsRouter(
 
       if (proposal.status === 'PAYING' && proposal.paypalBatchId) {
         try {
-          const batchStatus = await payPalClient.getPayoutBatchStatus(proposal.paypalBatchId);
+          const isMockBatch =
+            proposal.paypalBatchId.startsWith('MOCK-') ||
+            proposal.paypalBatchId.startsWith('SIMULATED-');
+          const client = isMockBatch && mockPayPalClient ? mockPayPalClient : payPalClient;
+          const batchStatus = await client.getPayoutBatchStatus(proposal.paypalBatchId);
           if (batchStatus.batchStatus === 'SUCCESS') {
             proposal.status = 'PAID';
             proposal.updatedAt = new Date().toISOString();

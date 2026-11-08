@@ -35,8 +35,15 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     let errMsg = `Request failed (${response.status})`;
     let errJson: any = null;
     try {
-      errJson = await response.json();
-      errMsg = errJson.error || errJson.message || errMsg;
+      const rawText = await response.text();
+      try {
+        errJson = JSON.parse(rawText);
+        errMsg = errJson.error || errJson.message || errMsg;
+      } catch {
+        if (rawText && rawText.trim().length > 0) {
+          errMsg = rawText.replace(/<[^>]+>/g, '').trim() || errMsg;
+        }
+      }
     } catch {
       // fallback
     }

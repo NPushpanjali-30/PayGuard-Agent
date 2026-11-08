@@ -11,6 +11,15 @@ const server = app.listen(config.PORT, () => {
   logger.info(`🔒 Security: Approval Limit: $${config.APPROVAL_LIMIT}, Hard Limit: $${config.HARD_LIMIT}`);
 });
 
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    logger.error(`❌ Port ${config.PORT} is already in use by another process.`);
+    logger.error(`👉 Tip: Terminate the process on port ${config.PORT} or specify a different port via PORT=<port>.`);
+    process.exit(1);
+  }
+  throw err;
+});
+
 process.on('SIGTERM', () => {
   logger.info('Received SIGTERM, gracefully shutting down server...');
   server.close(() => {
