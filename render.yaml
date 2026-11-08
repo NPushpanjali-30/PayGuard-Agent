@@ -4,16 +4,20 @@ services:
     env: node
     plan: free
     buildCommand: npm ci && npm run build
-    startCommand: npm start
+    startCommand: npm run seed && npm start
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 10000
+      - key: APP_BASE_URL
+        value: http://localhost:10000
       - key: PAYPAL_MODE
         value: mock
       - key: APP_PASSWORD
         generateValue: true
+      - key: APPROVERS
+        value: ""
       - key: SESSION_SECRET
         generateValue: true
       - key: APPROVAL_LIMIT
@@ -23,4 +27,24 @@ services:
       - key: DB_PATH
         value: /tmp/payguard.db
       - key: GEMINI_MODEL
-        value: gemini-2.5-flash
+        value: gemini-3.8-flash
+      - key: CONFIRMATION_TTL_HOURS
+        value: "24"
+      - key: DUAL_APPROVAL_THRESHOLD
+        value: "1000"
+      - key: NEW_PAYEE_COOLING_OFF_HOURS
+        value: "24"
+      - key: DEMO_FAST_FORWARD
+        value: "false"
+      - key: INTAKE_API_KEY
+        value: ""
+      - key: SMTP_HOST
+        value: ""
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        value: ""
+      - key: SMTP_PASS
+        value: ""
+      - key: SMTP_FROM
+        value: ""

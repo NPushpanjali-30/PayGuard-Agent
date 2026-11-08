@@ -5,7 +5,10 @@ import {
   SecondOpinion,
   BackstopSignals,
   Vendor,
-  RuleId
+  RuleId,
+  AttachmentAnalysisResult,
+  BlockedSender,
+  BlockedPayee
 } from './types.js';
 import { checkLookalikeDomain } from './lookalike.js';
 
@@ -31,6 +34,9 @@ export interface EvaluationInput {
   matchedVendor: Vendor | null;
   allKnownVendors: Vendor[];
   isFallbackReader: boolean;
+  attachmentAnalyses?: AttachmentAnalysisResult[];
+  blockedSenders?: BlockedSender[];
+  blockedPayees?: BlockedPayee[];
 }
 
 /**
@@ -45,7 +51,9 @@ export function evaluateRules(input: EvaluationInput): Flag[] {
     backstop,
     matchedVendor,
     allKnownVendors,
-    isFallbackReader
+    isFallbackReader,
+    blockedSenders = [],
+    blockedPayees = []
   } = input;
 
   const flags: Flag[] = [];
@@ -295,6 +303,154 @@ export function evaluateRules(input: EvaluationInput): Flag[] {
       severity: 'MEDIUM',
       title: 'Cautious Fallback Mode (No AI Key)',
       evidence: 'No GEMINI_API_KEY detected. Fallback deterministic reader mandates verification check for payment requests.'
+    });
+  }
+
+  // --- ATTACHMENT RULES (17 - 21) ---
+  const attachmentAnalyses = input.attachmentAnalyses || [];
+
+  for (const att of attachmentAnalyses) {
+    // 17. attachment_not_read: MEDIUM
+    if (att.error || !att.invoiceData || att.invoiceData.unreadable) {
+      flags.push({
+        id: 'attachment_not_read',
+        severity: 'MEDIUM',
+        title: 'Invoice Attachment Could Not Be Read',
+        evidence: `Attachment '${att.attachment.filename}' could not be analyzed (${att.error || 'unreadable content or fallback mode without recorded sample'}). Human review required.`
+      });
+    }
+
+    if (att.invoiceData && !att.invoiceData.unreadable) {
+      const inv = att.invoiceData;
+
+      // 18. attachment_hidden_instructions: HIGH
+      if (inv.hiddenInstructionsDetected) {
+        flags.push({
+          id: 'attachment_hidden_instructions',
+          severity: 'HIGH',
+          title: 'Hidden Instructions / Prompt Injection in Attachment',
+          evidence: `Document '${att.attachment.filename}' contains suspicious prompt instructions or attempts to alter agent behavior.`
+        });
+      }
+
+      // Check payee identifiers in attachment
+      const registeredPaypals = matchedVendor ? matchedVendor.paypalEmails.map(e => e.toLowerCase()) : [];
+      const emailPayees = [
+        ...aiAnalysis.newPayeeIdentifiers.map(i => i.toLowerCase()),
+        parsedEmail.senderAddress.toLowerCase()
+      ];
+
+      const invPayees = inv.payeeIdentifiers.map(p => p.trim());
+
+      // 19. attachment_payee_mismatch: HIGH
+      // Payee in PDF differs from email's payee or from vendor's payee on file
+      const conflictingPayees = invPayees.filter(payee => {
+        const clean = payee.toLowerCase();
+        // If matched vendor has payees on file, does PDF payee match any of them?
+        if (matchedVendor && registeredPaypals.length > 0) {
+          if (!registeredPaypals.includes(clean)) return true;
+        }
+        // If email requested a specific payee and it's different from PDF payee
+        if (aiAnalysis.newPayeeIdentifiers.length > 0 && !emailPayees.includes(clean)) {
+          return true;
+        }
+        return false;
+      });
+
+      if (conflictingPayees.length > 0) {
+        flags.push({
+          id: 'attachment_payee_mismatch',
+          severity: 'HIGH',
+          title: 'Attachment Payee Mismatches Vendor Records / Email Claims',
+          evidence: `Attachment '${att.attachment.filename}' lists payee(s): ${conflictingPayees.join(', ')}, which does not match verified payee on file (${registeredPaypals.join(', ') || 'none on file'}) or email claims.`
+        });
+      }
+
+      // 20. attachment_new_payee: HIGH
+      // If attachment introduces an unrecognized payee not registered on file
+      const unknownPayees = invPayees.filter(payee => {
+        const clean = payee.toLowerCase();
+        return !registeredPaypals.includes(clean);
+      });
+
+      if (unknownPayees.length > 0 && !flags.some(f => f.id === 'attachment_new_payee')) {
+        flags.push({
+          id: 'attachment_new_payee',
+          severity: 'HIGH',
+          title: 'Unrecognized Payee Identifier in Attachment',
+          evidence: `Attachment '${att.attachment.filename}' introduces unverified payee destination: ${unknownPayees.join(', ')}.`
+        });
+      }
+
+      // 21. attachment_amount_mismatch: MEDIUM, HIGH if above 2x difference
+      if (inv.amount != null && aiAnalysis.amount != null) {
+        const diff = Math.abs(inv.amount - aiAnalysis.amount);
+        if (diff > 0.01) {
+          const ratio = Math.max(inv.amount, aiAnalysis.amount) / Math.max(0.01, Math.min(inv.amount, aiAnalysis.amount));
+          const isHighMismatch = ratio >= 2.0;
+
+          flags.push({
+            id: 'attachment_amount_mismatch',
+            severity: isHighMismatch ? 'HIGH' : 'MEDIUM',
+            title: isHighMismatch
+              ? 'Severe Amount Mismatch Between Attachment and Email (>= 2x)'
+              : 'Amount Discrepancy Between Attachment and Email',
+            evidence: `Attachment invoice lists $${inv.amount.toFixed(2)} ${inv.currency || 'USD'}, but email claims $${aiAnalysis.amount.toFixed(2)} ${aiAnalysis.currency || 'USD'} (${ratio.toFixed(1)}x difference).`
+          });
+        }
+      }
+    }
+  }
+
+  // 22. blocklisted_sender: HIGH (forces HOLD)
+  const senderDomainLower = parsedEmail.senderDomain.toLowerCase();
+  const senderAddressLower = parsedEmail.senderAddress.toLowerCase();
+  const replyToDomainLower = parsedEmail.replyToDomain?.toLowerCase();
+  const replyToAddressLower = parsedEmail.replyToAddress?.toLowerCase();
+
+  const matchedBlockedSender = blockedSenders.find(s => {
+    if (s.domain && (s.domain.toLowerCase() === senderDomainLower || (replyToDomainLower && s.domain.toLowerCase() === replyToDomainLower))) {
+      return true;
+    }
+    if (s.address && (s.address.toLowerCase() === senderAddressLower || (replyToAddressLower && s.address.toLowerCase() === replyToAddressLower))) {
+      return true;
+    }
+    return false;
+  });
+
+  if (matchedBlockedSender) {
+    flags.push({
+      id: 'blocklisted_sender',
+      severity: 'HIGH',
+      title: 'Sender is on Security Blocklist',
+      evidence: `Sender address '${parsedEmail.senderAddress}' or domain '${parsedEmail.senderDomain}' was previously blocklisted for security reasons (Reason: ${matchedBlockedSender.reason}).`
+    });
+  }
+
+  // 23. blocklisted_payee: HIGH (forces HOLD)
+  const candidatePayees = new Set<string>();
+  for (const p of aiAnalysis.newPayeeIdentifiers) candidatePayees.add(p.toLowerCase());
+  for (const p of backstop.paypalEmailsFound) candidatePayees.add(p.toLowerCase());
+  for (const p of backstop.ibanFound) candidatePayees.add(p.toLowerCase());
+  for (const p of backstop.accountNumbersFound) candidatePayees.add(p.toLowerCase());
+  if (attachmentAnalyses) {
+    for (const att of attachmentAnalyses) {
+      if (att.invoiceData?.payeeIdentifiers) {
+        for (const p of att.invoiceData.payeeIdentifiers) candidatePayees.add(p.toLowerCase());
+      }
+    }
+  }
+
+  const matchedBlockedPayee = blockedPayees.find(bp =>
+    candidatePayees.has(bp.identifier.toLowerCase())
+  );
+
+  if (matchedBlockedPayee) {
+    flags.push({
+      id: 'blocklisted_payee',
+      severity: 'HIGH',
+      title: 'Payee Identifier is on Security Blocklist',
+      evidence: `Requested payee '${matchedBlockedPayee.identifier}' was previously blocklisted as an attacker or unauthorized account (Reason: ${matchedBlockedPayee.reason}).`
     });
   }
 

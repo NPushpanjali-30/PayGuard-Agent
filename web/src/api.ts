@@ -4,7 +4,13 @@ import {
   PaymentProposal,
   Vendor,
   AuditLogEntry,
-  SampleEmailItem
+  SampleEmailItem,
+  VendorConfirmation,
+  ConfirmationStatus,
+  OutboxMessage,
+  BlockedSender,
+  BlockedPayee,
+  BlocklistResponse
 } from './types.js';
 
 const API_BASE = '/api';
@@ -44,11 +50,11 @@ export const api = {
   getConfig: () => request<AppConfig>('/config'),
 
   // Auth
-  checkAuth: () => request<{ authenticated: boolean }>('/auth/me'),
-  login: (password: string) =>
-    request<{ authenticated: boolean }>('/auth/login', {
+  checkAuth: () => request<{ authenticated: boolean; user?: string }>('/auth/me'),
+  login: (password: string, username?: string) =>
+    request<{ authenticated: boolean; user?: string }>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ password })
+      body: JSON.stringify({ password, username })
     }),
   logout: () =>
     request<{ message: string }>('/auth/logout', {
@@ -63,6 +69,11 @@ export const api = {
     request<CheckEmailResult>('/email/check', {
       method: 'POST',
       body: JSON.stringify({ rawEmail })
+    }),
+  checkEmailWithAttachments: (formData: FormData) =>
+    request<CheckEmailResult>('/email/check-with-attachments', {
+      method: 'POST',
+      body: formData
     }),
 
   // Proposals
@@ -82,17 +93,59 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data)
     }),
-  rejectProposal: (id: string, reason: string) =>
+  rejectProposal: (
+    id: string,
+    reason: string,
+    options?: { blockSenderDomain?: boolean; blockPayeeIdentifiers?: boolean }
+  ) =>
     request<PaymentProposal>(`/proposals/${id}/reject`, {
       method: 'POST',
-      body: JSON.stringify({ reason })
+      body: JSON.stringify({ reason, ...options })
     }),
+  sendConfirmation: (proposalId: string) =>
+    request<{
+      confirmation: VendorConfirmation;
+      confirmationUrl: string;
+      mode: 'smtp' | 'demo_outbox';
+      sentTo: string;
+    }>(`/proposals/${proposalId}/send-confirmation`, {
+      method: 'POST'
+    }),
+  bypassCoolingOff: (proposalId: string) =>
+    request<PaymentProposal>(`/proposals/${proposalId}/bypass-cooling-off`, {
+      method: 'POST'
+    }),
+
+  // Public Confirmation endpoints
+  getConfirmationDetails: (token: string) =>
+    request<{
+      vendorName: string;
+      amount: number;
+      currency: string;
+      status: ConfirmationStatus;
+      isExpired: boolean;
+      expiresAt: string;
+    }>(`/confirm/token/${token}`),
+  resolveConfirmation: (token: string, decision: 'CONFIRMED' | 'DENIED') =>
+    request<{
+      status: 'CONFIRMED' | 'DENIED';
+      proposalId: string;
+      vendorName: string;
+      message: string;
+    }>(`/confirm/token/${token}`, {
+      method: 'POST',
+      body: JSON.stringify({ decision })
+    }),
+
+  // Outbox
+  getOutbox: () => request<OutboxMessage[]>('/outbox'),
 
   // Vendors
   getVendors: () => request<Vendor[]>('/vendors'),
   createVendor: (vendor: {
     name: string;
     payeeEmail: string;
+    contactEmail?: string | null;
     domains?: string[];
     phone?: string | null;
     typicalAmount?: number;
@@ -105,6 +158,11 @@ export const api = {
     request<Vendor>(`/vendors/${vendorId}/payee`, {
       method: 'PUT',
       body: JSON.stringify({ newPayee, reason })
+    }),
+  updateVendorContactEmail: (vendorId: string, contactEmail: string | null) =>
+    request<Vendor>(`/vendors/${vendorId}/contact-email`, {
+      method: 'PUT',
+      body: JSON.stringify({ contactEmail })
     }),
   importCsvVendors: (csvContent: string) =>
     request<{ importedCount: number; vendors: Vendor[]; errors: string[] }>('/vendors/import-csv', {
@@ -122,5 +180,26 @@ export const api = {
     }),
 
   // Audit Logs
-  getAuditLogs: (limit = 100) => request<AuditLogEntry[]>(`/audit?limit=${limit}`)
+  getAuditLogs: (limit = 100) => request<AuditLogEntry[]>(`/audit?limit=${limit}`),
+
+  // Blocklist
+  getBlocklist: () => request<BlocklistResponse>('/blocklist'),
+  addBlockedSender: (data: { domain?: string | null; address?: string | null; reason: string }) =>
+    request<BlockedSender>('/blocklist/senders', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    }),
+  removeBlockedSender: (id: string) =>
+    request<{ success: boolean; id: string }>(`/blocklist/senders/${id}`, {
+      method: 'DELETE'
+    }),
+  addBlockedPayee: (data: { identifier: string; reason: string }) =>
+    request<BlockedPayee>('/blocklist/payees', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    }),
+  removeBlockedPayee: (id: string) =>
+    request<{ success: boolean; id: string }>(`/blocklist/payees/${id}`, {
+      method: 'DELETE'
+    })
 };

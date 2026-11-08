@@ -16,6 +16,33 @@ export interface Flag {
   evidence: string;
 }
 
+export type ConfirmationStatus = 'PENDING' | 'CONFIRMED' | 'DENIED' | 'EXPIRED';
+
+export interface VendorConfirmation {
+  id: string;
+  proposalId: string;
+  vendorId: string;
+  tokenHash: string;
+  sentTo: string;
+  status: ConfirmationStatus;
+  createdAt: string;
+  expiresAt: string;
+  resolvedAt: string | null;
+}
+
+export interface OutboxMessage {
+  id: string;
+  to: string;
+  from: string;
+  subject: string;
+  html: string;
+  text: string;
+  confirmationUrl: string;
+  createdAt: string;
+  mode: 'smtp' | 'demo_outbox';
+  status: 'sent' | 'queued_demo';
+}
+
 export interface PaymentProposal {
   id: string;
   vendorId: string | null;
@@ -39,6 +66,16 @@ export interface PaymentProposal {
   rawEmail: string;
   createdAt: string;
   updatedAt: string;
+  confirmation?: VendorConfirmation | null;
+  vendorContactEmail?: string | null;
+  requiresDualApproval?: boolean;
+  firstApprover?: string | null;
+  firstApprovedAt?: string | null;
+  secondApprover?: string | null;
+  secondApprovedAt?: string | null;
+  coolingOffUntil?: string | null;
+  coolingOffBypassed?: boolean;
+  source?: 'manual' | 'zapier_intake' | 'mcp';
 }
 
 export interface Vendor {
@@ -47,6 +84,7 @@ export interface Vendor {
   paypalEmails: string[];
   domains: string[];
   phone: string | null;
+  contactEmail?: string | null;
   typicalAmount: number;
   paymentCount: number;
   source: 'paypal' | 'csv' | 'manual';
@@ -60,6 +98,29 @@ export interface CallbackRecommendation {
   hasPhoneOnFile: boolean;
   suggestedQuestions: string[];
   script: string;
+}
+
+export interface InvoiceData {
+  vendorName: string | null;
+  payeeIdentifiers: string[];
+  amount: number | null;
+  currency: string | null;
+  invoiceNumber: string | null;
+  dueDate: string | null;
+  bankChangeMentioned: boolean;
+  hiddenInstructionsDetected: boolean;
+  rawExtractedText: string;
+  unreadable?: boolean;
+}
+
+export interface AttachmentAnalysisResult {
+  attachment: {
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+  };
+  invoiceData: InvoiceData | null;
+  error?: string;
 }
 
 export interface CheckEmailResult {
@@ -101,6 +162,7 @@ export interface CheckEmailResult {
   callbackRecommendation: CallbackRecommendation;
   proposal: PaymentProposal | null;
   isFallbackReader: boolean;
+  attachments?: AttachmentAnalysisResult[];
 }
 
 export interface AuditLogEntry {
@@ -118,6 +180,8 @@ export interface AppConfig {
   model: string;
   approvalLimit: number;
   hardLimit: number;
+  dualApprovalThreshold?: number;
+  demoFastForward?: boolean;
   environment: string;
 }
 
@@ -127,4 +191,32 @@ export interface SampleEmailItem {
   category: 'fraud' | 'honest';
   label: string;
   rawEmail: string;
+  attachments?: Array<{
+    filename: string;
+    mimeType: string;
+    contentBase64: string;
+  }>;
 }
+
+export interface BlockedSender {
+  id: string;
+  domain?: string | null;
+  address?: string | null;
+  reason: string;
+  sourceProposalId?: string | null;
+  createdAt: string;
+}
+
+export interface BlockedPayee {
+  id: string;
+  identifier: string;
+  reason: string;
+  sourceProposalId?: string | null;
+  createdAt: string;
+}
+
+export interface BlocklistResponse {
+  senders: BlockedSender[];
+  payees: BlockedPayee[];
+}
+

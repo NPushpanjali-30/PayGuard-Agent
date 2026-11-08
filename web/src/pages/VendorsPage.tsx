@@ -15,10 +15,16 @@ export const VendorsPage: React.FC = () => {
   const [payeeChangeReason, setPayeeChangeReason] = useState('');
   const [submittingPayeeChange, setSubmittingPayeeChange] = useState(false);
 
+  // Edit Contact Email Modal State
+  const [editingContactVendor, setEditingContactVendor] = useState<Vendor | null>(null);
+  const [newContactEmail, setNewContactEmail] = useState('');
+  const [submittingContactEmail, setSubmittingContactEmail] = useState(false);
+
   // Add Vendor Modal State
   const [showAddVendor, setShowAddVendor] = useState(false);
   const [vendorName, setVendorName] = useState('');
   const [vendorEmail, setVendorEmail] = useState('');
+  const [vendorContactEmail, setVendorContactEmail] = useState('');
   const [vendorPhone, setVendorPhone] = useState('');
   const [vendorDomains, setVendorDomains] = useState('');
   const [vendorAmount, setVendorAmount] = useState('0');
@@ -85,6 +91,25 @@ export const VendorsPage: React.FC = () => {
     }
   };
 
+  const handleSubmitEditContactEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingContactVendor) return;
+
+    setError(null);
+    setSubmittingContactEmail(true);
+
+    try {
+      await api.updateVendorContactEmail(editingContactVendor.id, newContactEmail.trim() || null);
+      setSuccessMsg(`Verified contact email on file for ${editingContactVendor.name} updated.`);
+      setEditingContactVendor(null);
+      await loadVendors();
+    } catch (err: any) {
+      setError(err.message || 'Failed to update contact email');
+    } finally {
+      setSubmittingContactEmail(false);
+    }
+  };
+
   const handleCreateVendor = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -99,6 +124,7 @@ export const VendorsPage: React.FC = () => {
       await api.createVendor({
         name: vendorName.trim(),
         payeeEmail: vendorEmail.trim(),
+        contactEmail: vendorContactEmail.trim() || null,
         phone: vendorPhone.trim() || null,
         domains,
         typicalAmount: parseFloat(vendorAmount) || 0
@@ -108,6 +134,7 @@ export const VendorsPage: React.FC = () => {
       setShowAddVendor(false);
       setVendorName('');
       setVendorEmail('');
+      setVendorContactEmail('');
       setVendorPhone('');
       setVendorDomains('');
       setVendorAmount('0');
@@ -198,6 +225,7 @@ export const VendorsPage: React.FC = () => {
                 <tr>
                   <th>Vendor Name</th>
                   <th>PayPal Payee on File</th>
+                  <th>Verified Contact Email</th>
                   <th>Registered Domains</th>
                   <th>Verified Phone</th>
                   <th>Typical Amount</th>
@@ -222,6 +250,17 @@ export const VendorsPage: React.FC = () => {
                         </span>
                       )}
                     </td>
+                    <td>
+                      {v.contactEmail ? (
+                        <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>
+                          {v.contactEmail}
+                        </code>
+                      ) : (
+                        <span className="badge badge-warning" style={{ fontSize: '0.7rem' }}>
+                          None on File
+                        </span>
+                      )}
+                    </td>
                     <td style={{ fontSize: '0.8rem' }}>
                       {v.domains.join(', ') || <span style={{ color: 'var(--text-muted)' }}>None</span>}
                     </td>
@@ -242,14 +281,27 @@ export const VendorsPage: React.FC = () => {
                       </span>
                     </td>
                     <td>
-                      <button
-                        type="button"
-                        className="btn btn-outline"
-                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
-                        onClick={() => handleOpenEditPayee(v)}
-                      >
-                        Edit Payee
-                      </button>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                          onClick={() => handleOpenEditPayee(v)}
+                        >
+                          Edit Payee
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                          onClick={() => {
+                            setEditingContactVendor(v);
+                            setNewContactEmail(v.contactEmail || '');
+                          }}
+                        >
+                          Edit Contact
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -326,6 +378,58 @@ export const VendorsPage: React.FC = () => {
         </div>
       )}
 
+      {/* Edit Contact Email Modal */}
+      {editingContactVendor && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h3 className="card-title">Update Verified Contact Email: {editingContactVendor.name}</h3>
+              <button
+                type="button"
+                className="btn btn-outline"
+                style={{ padding: '0.2rem 0.5rem' }}
+                onClick={() => setEditingContactVendor(null)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+              <strong>Out-of-Band Security Contact:</strong> This verified email is used exclusively for out-of-band confirmation requests. It is never automatically populated from incoming invoice emails.
+            </p>
+
+            <form onSubmit={handleSubmitEditContactEmail}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="edit-contact-email-input">
+                  Verified Vendor Contact Email:
+                </label>
+                <input
+                  id="edit-contact-email-input"
+                  type="email"
+                  className="form-input"
+                  placeholder="contact@vendor.com"
+                  value={newContactEmail}
+                  onChange={e => setNewContactEmail(e.target.value)}
+                />
+              </div>
+
+              <div className="modal-actions">
+                <button type="button" className="btn btn-outline" onClick={() => setEditingContactVendor(null)}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={submittingContactEmail}
+                >
+                  {submittingContactEmail ? 'Saving...' : 'Save Contact Email'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Add Vendor Modal */}
       {showAddVendor && (
         <div className="modal-overlay">
@@ -370,6 +474,20 @@ export const VendorsPage: React.FC = () => {
                   value={vendorEmail}
                   onChange={e => setVendorEmail(e.target.value)}
                   required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="new-vendor-contact-email">
+                  Verified Contact Email (Out-of-Band Confirmation on File):
+                </label>
+                <input
+                  id="new-vendor-contact-email"
+                  type="email"
+                  className="form-input"
+                  placeholder="contact@reliablecloud.com"
+                  value={vendorContactEmail}
+                  onChange={e => setVendorContactEmail(e.target.value)}
                 />
               </div>
 

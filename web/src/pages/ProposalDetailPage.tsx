@@ -12,6 +12,7 @@ interface ProposalDetailPageProps {
 export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }) => {
   const { id } = useParams<{ id: string }>();
   const [proposal, setProposal] = useState<PaymentProposal | null>(null);
+  const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -27,6 +28,9 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [submittingReject, setSubmittingReject] = useState(false);
+  const [blockSenderDomain, setBlockSenderDomain] = useState(false);
+  const [blockPayeeIdentifiers, setBlockPayeeIdentifiers] = useState(false);
+  const [sendingConfirmation, setSendingConfirmation] = useState(false);
 
   const loadProposal = async () => {
     if (!id) return;
@@ -38,6 +42,23 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
       setError(err.message || 'Failed to load proposal');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSendConfirmation = async () => {
+    if (!proposal) return;
+    setError(null);
+    setSendingConfirmation(true);
+    try {
+      const res = await api.sendConfirmation(proposal.id);
+      setSuccessMsg(
+        `Confirmation dispatched to ${res.sentTo} (${res.mode === 'demo_outbox' ? 'Demo Outbox mode' : 'SMTP'}).`
+      );
+      await loadProposal();
+    } catch (err: any) {
+      setError(err.message || 'Failed to send confirmation');
+    } finally {
+      setSendingConfirmation(false);
     }
   };
 
@@ -56,7 +77,24 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
 
   useEffect(() => {
     loadProposal();
+    api.checkAuth().then(res => {
+      if (res.authenticated && res.user) {
+        setCurrentUser(res.user);
+      }
+    }).catch(() => {});
   }, [id]);
+
+  const handleBypassCoolingOff = async () => {
+    if (!proposal) return;
+    setError(null);
+    try {
+      const updated = await api.bypassCoolingOff(proposal.id);
+      setProposal(updated);
+      setSuccessMsg('Cooling-off period bypassed (Demo fast-forward).');
+    } catch (err: any) {
+      setError(err.message || 'Failed to bypass cooling-off');
+    }
+  };
 
   // Auto-poll if in PAYING status
   useEffect(() => {
@@ -89,16 +127,33 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
   }
 
   const isHold = proposal.verdict === 'HOLD';
+  const isVendorConfirmed = proposal.confirmation?.status === 'CONFIRMED';
   const approvalLimit = config?.approvalLimit || 500;
   const hardLimit = config?.hardLimit || 5000;
   const exceedsApprovalLimit = proposal.amount > approvalLimit;
   const exceedsHardLimit = proposal.amount > hardLimit || proposal.isHardBlocked;
 
+  const isSameApprover = Boolean(
+    proposal.requiresDualApproval &&
+    proposal.firstApprover &&
+    !proposal.secondApprover &&
+    currentUser &&
+    currentUser.toLowerCase() === proposal.firstApprover.toLowerCase()
+  );
+
+  const isCoolingOffActive = Boolean(
+    proposal.coolingOffUntil &&
+    !proposal.coolingOffBypassed &&
+    new Date(proposal.coolingOffUntil).getTime() > Date.now()
+  );
+
   // Validate if approver can click Approve button
   const canApprove =
     proposal.status === 'PENDING_REVIEW' &&
     !exceedsHardLimit &&
-    (!isHold || (callbackChecked && callbackNote.trim().length >= 5)) &&
+    !isSameApprover &&
+    !isCoolingOffActive &&
+    (!isHold || isVendorConfirmed || (callbackChecked && callbackNote.trim().length >= 5)) &&
     (!exceedsApprovalLimit || parseFloat(typedAmount) === proposal.amount);
 
   const handleApprove = async () => {
@@ -115,7 +170,11 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
       });
 
       setProposal(updated);
-      setSuccessMsg(`Payout batch ${updated.paypalBatchId || ''} submitted to PayPal.`);
+      if (updated.status === 'PENDING_REVIEW' && updated.firstApprover) {
+        setSuccessMsg(`First approval recorded by ${updated.firstApprover} (1/2). Awaiting second approver.`);
+      } else {
+        setSuccessMsg(`Payout batch ${updated.paypalBatchId || ''} submitted to PayPal.`);
+      }
     } catch (err: any) {
       setError(err.message || 'Approval failed');
     } finally {
@@ -129,10 +188,13 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
     setSubmittingReject(true);
 
     try {
-      const updated = await api.rejectProposal(proposal.id, rejectReason.trim());
+      const updated = await api.rejectProposal(proposal.id, rejectReason.trim(), {
+        blockSenderDomain,
+        blockPayeeIdentifiers
+      });
       setProposal(updated);
       setShowRejectModal(false);
-      setSuccessMsg('Proposal marked REJECTED and logged to audit trail.');
+      setSuccessMsg('Proposal marked REJECTED and security policies updated.');
     } catch (err: any) {
       setError(err.message || 'Rejection failed');
     } finally {
@@ -161,6 +223,19 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
               {proposal.verdict}
             </span>
             <StatusBadge status={proposal.status} />
+            {proposal.requiresDualApproval && (
+              <span
+                className="badge"
+                style={{
+                  backgroundColor: proposal.secondApprover ? '#dcfce7' : '#fef3c7',
+                  color: proposal.secondApprover ? '#16a34a' : '#92400e',
+                  fontWeight: 700,
+                  border: '1px solid currentColor'
+                }}
+              >
+                Dual Approval: {proposal.secondApprover ? '2/2' : proposal.firstApprover ? '1/2' : '0/2'}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -218,6 +293,36 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
                 <strong>Vendor Name:</strong> {proposal.vendorName}
               </div>
               <div>
+                <strong>Ingestion Source:</strong>{' '}
+                <span
+                  className="badge"
+                  style={{
+                    fontSize: '0.75rem',
+                    marginLeft: '0.4rem',
+                    backgroundColor:
+                      proposal.source === 'zapier_intake'
+                        ? '#e0e7ff'
+                        : proposal.source === 'mcp'
+                        ? '#ede9fe'
+                        : 'var(--bg-subtle, #f1f5f9)',
+                    color:
+                      proposal.source === 'zapier_intake'
+                        ? '#4338ca'
+                        : proposal.source === 'mcp'
+                        ? '#6d28d9'
+                        : 'var(--text-muted, #475569)',
+                    fontWeight: 600,
+                    border: '1px solid currentColor'
+                  }}
+                >
+                  {proposal.source === 'zapier_intake'
+                    ? '⚡ Zapier/Intake'
+                    : proposal.source === 'mcp'
+                    ? '🤖 MCP'
+                    : '👤 Manual'}
+                </span>
+              </div>
+              <div>
                 <strong>Authorized Amount:</strong>{' '}
                 <span style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--primary)' }}>
                   ${proposal.amount.toFixed(2)} {proposal.currency}
@@ -239,6 +344,84 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
                   <p style={{ fontSize: '0.75rem', marginTop: '0.35rem', color: 'var(--text-muted)' }}>
                     Protection active: The agent refuses to pay this address. Payout will go strictly to the payee on file.
                   </p>
+                </div>
+              )}
+
+              {proposal.requiresDualApproval && (
+                <div style={{ padding: '0.75rem', backgroundColor: 'var(--bg-subtle)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', marginTop: '0.5rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong style={{ fontSize: '0.85rem' }}>Dual Approval Progress:</strong>
+                    <span style={{ fontWeight: 700, color: proposal.secondApprover ? 'var(--success)' : 'var(--warning-text, #92400e)' }}>
+                      {proposal.secondApprover ? '2/2 Completed' : proposal.firstApprover ? '1/2 (Awaiting 2nd)' : '0/2 (Awaiting 1st)'}
+                    </span>
+                  </div>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.2rem', marginBottom: '0.4rem' }}>
+                    {proposal.amount >= (config?.dualApprovalThreshold || 1000)
+                      ? `Amount ($${proposal.amount.toFixed(2)}) meets or exceeds dual approval threshold ($${config?.dualApprovalThreshold || 1000}).`
+                      : 'Payee has no prior successful payment history (new payee policy).'}
+                  </p>
+                  <div style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <div>
+                      <strong>1st Approval: </strong>
+                      {proposal.firstApprover ? (
+                        <span style={{ color: 'var(--success)' }}>
+                          {proposal.firstApprover} ({new Date(proposal.firstApprovedAt!).toLocaleTimeString()})
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>Pending</span>
+                      )}
+                    </div>
+                    <div>
+                      <strong>2nd Approval: </strong>
+                      {proposal.secondApprover ? (
+                        <span style={{ color: 'var(--success)' }}>
+                          {proposal.secondApprover} ({new Date(proposal.secondApprovedAt!).toLocaleTimeString()})
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>Pending (must differ from 1st approver)</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {proposal.coolingOffUntil && (
+                <div
+                  style={{
+                    padding: '0.75rem',
+                    backgroundColor: proposal.coolingOffBypassed ? 'var(--bg-subtle)' : isCoolingOffActive ? '#fef3c7' : '#dcfce7',
+                    borderRadius: 'var(--radius)',
+                    border: '1px solid var(--border)',
+                    fontSize: '0.8rem',
+                    marginTop: '0.5rem'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <div>
+                      <strong>Cooling-off Period (New Payee): </strong>
+                      {proposal.coolingOffBypassed ? (
+                        <span style={{ color: 'var(--primary)', fontWeight: 600 }}>⚡ Bypassed via Demo Fast-Forward</span>
+                      ) : isCoolingOffActive ? (
+                        <span style={{ color: '#92400e', fontWeight: 600 }}>
+                          Active until {new Date(proposal.coolingOffUntil).toLocaleTimeString()} ({new Date(proposal.coolingOffUntil).toLocaleDateString()})
+                        </span>
+                      ) : (
+                        <span style={{ color: '#16a34a', fontWeight: 600 }}>
+                          Completed
+                        </span>
+                      )}
+                    </div>
+                    {isCoolingOffActive && config?.demoFastForward && (
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
+                        onClick={handleBypassCoolingOff}
+                      >
+                        ⚡ Demo: skip waiting
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -263,6 +446,97 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
               Strict Invariant: The AI never moves money by itself. Every PayPal payout requires human verification.
             </p>
 
+            {/* Out-of-Band Vendor Confirmation Section (Milestone 3) */}
+            {(proposal.verdict === 'HOLD' || proposal.verdict === 'CHECK') && (
+              <div
+                style={{
+                  padding: '1rem',
+                  backgroundColor: 'var(--bg-muted, #f8fafc)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius)',
+                  marginBottom: '1rem'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <h3 style={{ fontSize: '0.95rem', fontWeight: 700, margin: 0 }}>
+                    📧 Out-of-Band Vendor Confirmation
+                  </h3>
+                  {proposal.confirmation && (
+                    <span
+                      className={`badge ${
+                        proposal.confirmation.status === 'CONFIRMED'
+                          ? 'badge-success'
+                          : proposal.confirmation.status === 'DENIED'
+                          ? 'badge-danger'
+                          : proposal.confirmation.status === 'PENDING'
+                          ? 'badge-warning'
+                          : 'badge-muted'
+                      }`}
+                      style={{ fontSize: '0.75rem' }}
+                    >
+                      {proposal.confirmation.status}
+                    </span>
+                  )}
+                </div>
+
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+                  Dispatches a single-use crypto link to the vendor's verified contact email on file. If confirmed by the vendor, satisfies the HOLD verification requirement.
+                </p>
+
+                <div style={{ fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                  <strong>Verified Contact on File: </strong>
+                  {proposal.vendorContactEmail ? (
+                    <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--primary)' }}>
+                      {proposal.vendorContactEmail}
+                    </code>
+                  ) : (
+                    <span style={{ color: 'var(--danger)', fontWeight: 600 }}>
+                      None registered (Cannot send confirmation link)
+                    </span>
+                  )}
+                </div>
+
+                {proposal.confirmation ? (
+                  <div style={{ fontSize: '0.85rem', padding: '0.65rem 0.75rem', background: '#ffffff', borderRadius: '4px', border: '1px solid var(--border)' }}>
+                    <div>Sent to: <strong>{proposal.confirmation.sentTo}</strong></div>
+                    <div>Status: <strong>{proposal.confirmation.status}</strong></div>
+                    {proposal.confirmation.status === 'PENDING' && (
+                      <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid var(--border)' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          💡 Demo Outbox mode: test vendor confirmation link in Outbox:
+                        </span>
+                        <div style={{ marginTop: '0.25rem' }}>
+                          <Link
+                            to="/outbox"
+                            className="btn btn-outline"
+                            style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
+                          >
+                            Open Outbox to View / Test Confirmation Link →
+                          </Link>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  proposal.status === 'PENDING_REVIEW' && (
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      style={{ fontSize: '0.85rem', width: '100%' }}
+                      onClick={handleSendConfirmation}
+                      disabled={!proposal.vendorContactEmail || sendingConfirmation}
+                    >
+                      {sendingConfirmation
+                        ? 'Dispatching Confirmation...'
+                        : proposal.vendorContactEmail
+                        ? `📨 Send Confirmation to ${proposal.vendorContactEmail}`
+                        : 'No Verified Contact Email on File'}
+                    </button>
+                  )
+                )}
+              </div>
+            )}
+
             {exceedsHardLimit ? (
               <div style={{ padding: '1rem', backgroundColor: 'var(--danger-subtle)', border: '1px solid var(--danger-border)', borderRadius: 'var(--radius)', marginBottom: '1rem' }}>
                 <strong style={{ color: 'var(--danger)' }}>⛔ HARD BLOCKED BY POLICY</strong>
@@ -272,35 +546,76 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
               </div>
             ) : proposal.status === 'PENDING_REVIEW' ? (
               <div>
-                {/* Rule: HOLD proposals require callback checkbox + note */}
-                {isHold && (
-                  <div style={{ padding: '1rem', backgroundColor: 'var(--warning-subtle)', borderRadius: 'var(--radius)', marginBottom: '1rem', border: '1px solid var(--warning-border)' }}>
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
-                      <input
-                        type="checkbox"
-                        id="callback-checkbox"
-                        checked={callbackChecked}
-                        onChange={e => setCallbackChecked(e.target.checked)}
-                        style={{ marginTop: '0.2rem', width: '18px', height: '18px' }}
-                      />
-                      <label htmlFor="callback-checkbox" style={{ fontWeight: 600, fontSize: '0.875rem' }}>
-                        I called the verified number on file (out-of-band) and verified this invoice with the vendor.
-                      </label>
-                    </div>
+                {isSameApprover && (
+                  <div style={{ padding: '0.75rem', backgroundColor: '#fef3c7', border: '1px solid #f59e0b', borderRadius: 'var(--radius)', marginBottom: '1rem', color: '#92400e', fontSize: '0.85rem' }}>
+                    <strong>Dual Approval Required:</strong> You provided the first approval as <em>{proposal.firstApprover}</em>. To satisfy the two-person control rule, a different approver must provide the second approval.
+                  </div>
+                )}
 
-                    <div className="form-group" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
-                      <label className="form-label" htmlFor="callback-note-input" style={{ fontSize: '0.8rem' }}>
-                        Callback Verification Note (Mandatory, min 5 chars):
-                      </label>
-                      <input
-                        id="callback-note-input"
-                        type="text"
-                        className="form-input"
-                        placeholder="e.g. Spoke with CFO Alice at verified phone number..."
-                        value={callbackNote}
-                        onChange={e => setCallbackNote(e.target.value)}
-                      />
-                    </div>
+                {isCoolingOffActive && (
+                  <div style={{ padding: '0.75rem', backgroundColor: '#fef3c7', border: '1px solid #f59e0b', borderRadius: 'var(--radius)', marginBottom: '1rem', color: '#92400e', fontSize: '0.85rem' }}>
+                    <strong>Cooling-off Period Active:</strong> Disbursements to new payees require a waiting period until {new Date(proposal.coolingOffUntil!).toLocaleTimeString()} ({new Date(proposal.coolingOffUntil!).toLocaleDateString()}).
+                    {config?.demoFastForward && (
+                      <div style={{ marginTop: '0.5rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
+                          onClick={handleBypassCoolingOff}
+                        >
+                          ⚡ Demo: skip waiting
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Rule: HOLD proposals require out-of-band confirmation OR callback checkbox + note */}
+                {isHold && (
+                  <div style={{ padding: '1rem', backgroundColor: isVendorConfirmed ? 'rgba(34, 197, 94, 0.1)' : 'var(--warning-subtle)', borderRadius: 'var(--radius)', marginBottom: '1rem', border: `1px solid ${isVendorConfirmed ? '#22c55e' : 'var(--warning-border)'}` }}>
+                    {isVendorConfirmed ? (
+                      <div>
+                        <div style={{ fontWeight: 700, color: '#16a34a', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <span>✅</span>
+                          <span>Verified Out-of-Band by Vendor Contact</span>
+                        </div>
+                        <p style={{ fontSize: '0.8rem', marginTop: '0.25rem', color: 'var(--text-muted)' }}>
+                          Confirmation was approved by {proposal.confirmation?.sentTo}. Phone callback is optional.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--warning-text, #92400e)', marginBottom: '0.5rem' }}>
+                          ⚠️ HOLD Gate: Requires confirmed vendor email OR manual phone callback:
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                          <input
+                            type="checkbox"
+                            id="callback-checkbox"
+                            checked={callbackChecked}
+                            onChange={e => setCallbackChecked(e.target.checked)}
+                            style={{ marginTop: '0.2rem', width: '18px', height: '18px' }}
+                          />
+                          <label htmlFor="callback-checkbox" style={{ fontWeight: 600, fontSize: '0.875rem' }}>
+                            I called the verified number on file (out-of-band) and verified this invoice with the vendor.
+                          </label>
+                        </div>
+
+                        <div className="form-group" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
+                          <label className="form-label" htmlFor="callback-note-input" style={{ fontSize: '0.8rem' }}>
+                            Callback Verification Note (Mandatory if unconfirmed, min 5 chars):
+                          </label>
+                          <input
+                            id="callback-note-input"
+                            type="text"
+                            className="form-input"
+                            placeholder="e.g. Spoke with CFO Alice at verified phone number..."
+                            value={callbackNote}
+                            onChange={e => setCallbackNote(e.target.value)}
+                          />
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -346,14 +661,29 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
                     onClick={handleApprove}
                     disabled={!canApprove || submittingApproval}
                   >
-                    {submittingApproval ? 'Sending via PayPal...' : '✓ Approve & Send Payout'}
+                    {submittingApproval
+                      ? 'Submitting...'
+                      : isSameApprover
+                      ? 'Awaiting Second Approver'
+                      : isCoolingOffActive
+                      ? 'Holding in Cooling-off'
+                      : proposal.requiresDualApproval && !proposal.firstApprover
+                      ? '✓ Provide 1st Approval (1/2)'
+                      : proposal.requiresDualApproval
+                      ? '✓ Provide 2nd Approval & Send Payout (2/2)'
+                      : '✓ Approve & Send Payout'}
                   </button>
 
                   <button
                     type="button"
                     className="btn btn-danger"
                     style={{ flex: 1 }}
-                    onClick={() => setShowRejectModal(true)}
+                    onClick={() => {
+                      const isHold = proposal.verdict === 'HOLD';
+                      setBlockSenderDomain(isHold);
+                      setBlockPayeeIdentifiers(isHold);
+                      setShowRejectModal(true);
+                    }}
                   >
                     ✕ Reject
                   </button>
@@ -414,6 +744,56 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
                 onChange={e => setRejectReason(e.target.value)}
               />
             </div>
+
+            {(proposal.verdict === 'HOLD' || proposal.verdict === 'CHECK') && (
+              <div
+                style={{
+                  marginTop: '1rem',
+                  marginBottom: '1.25rem',
+                  padding: '0.75rem',
+                  backgroundColor: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  borderRadius: 'var(--radius)'
+                }}
+              >
+                <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#991b1b', marginBottom: '0.5rem' }}>
+                  🛡️ Security Blocklist Learning:
+                </p>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    fontSize: '0.85rem',
+                    marginBottom: '0.5rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={blockSenderDomain}
+                    onChange={e => setBlockSenderDomain(e.target.checked)}
+                  />
+                  <span>Block this sender domain (auto-HOLD future emails from this domain)</span>
+                </label>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    fontSize: '0.85rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={blockPayeeIdentifiers}
+                    onChange={e => setBlockPayeeIdentifiers(e.target.checked)}
+                  />
+                  <span>Block these payee identifiers (prevent future payments to these attacker accounts)</span>
+                </label>
+              </div>
+            )}
 
             <div className="modal-actions">
               <button type="button" className="btn btn-outline" onClick={() => setShowRejectModal(false)}>

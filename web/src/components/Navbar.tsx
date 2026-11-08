@@ -4,12 +4,13 @@ import { AppConfig } from '../types.js';
 
 interface NavbarProps {
   config: AppConfig | null;
+  user?: string | null;
   onLogout: () => void;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ config, onLogout, theme, onToggleTheme }) => {
+export const Navbar: React.FC<NavbarProps> = ({ config, user, onLogout, theme, onToggleTheme }) => {
   const location = useLocation();
 
   const isActive = (path: string) => location.pathname === path;
@@ -31,12 +32,29 @@ export const Navbar: React.FC<NavbarProps> = ({ config, onLogout, theme, onToggl
         <Link to="/vendors" className={`nav-link ${isActive('/vendors') ? 'active' : ''}`}>
           Vendors
         </Link>
+        <Link to="/outbox" className={`nav-link ${isActive('/outbox') ? 'active' : ''}`}>
+          Outbox
+        </Link>
         <Link to="/audit" className={`nav-link ${isActive('/audit') ? 'active' : ''}`}>
           Audit Trail
+        </Link>
+        <Link to="/blocklist" className={`nav-link ${isActive('/blocklist') ? 'active' : ''}`}>
+          Blocklist
         </Link>
       </nav>
 
       <div className="nav-actions">
+        {user && (
+          <span
+            className="badge badge-muted"
+            title={`Logged in Approver: ${user}`}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.8rem' }}
+          >
+            <span>👤</span>
+            <strong>{user}</strong>
+          </span>
+        )}
+
         {config && (
           <>
             <span

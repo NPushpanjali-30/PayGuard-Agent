@@ -73,4 +73,45 @@ describe('Auth & Session API', () => {
 
     expect(okRes.status).toBe(201);
   });
+
+  it('returns authenticated user identity from /api/auth/me', async () => {
+    const loginRes = await request(app)
+      .post('/api/auth/login')
+      .send({ username: 'approver', password: config.APP_PASSWORD });
+
+    expect(loginRes.status).toBe(200);
+    expect(loginRes.body.user).toBe('approver');
+
+    const meRes = await request(app)
+      .get('/api/auth/me')
+      .set('Cookie', loginRes.headers['set-cookie']);
+
+    expect(meRes.status).toBe(200);
+    expect(meRes.body.authenticated).toBe(true);
+    expect(meRes.body.user).toBe('approver');
+  });
+
+  it('supports multi-approver authentication when configured', async () => {
+    // Configure approvers
+    config.approversMap.set('alice', 'alicePass123!');
+    config.approversMap.set('bob', 'bobPass456!');
+
+    const aliceRes = await request(app)
+      .post('/api/auth/login')
+      .send({ username: 'alice', password: 'alicePass123!' });
+
+    expect(aliceRes.status).toBe(200);
+    expect(aliceRes.body.user).toBe('alice');
+
+    const meAlice = await request(app)
+      .get('/api/auth/me')
+      .set('Cookie', aliceRes.headers['set-cookie']);
+    expect(meAlice.body.user).toBe('alice');
+
+    // Wrong password for bob
+    const bobFail = await request(app)
+      .post('/api/auth/login')
+      .send({ username: 'bob', password: 'wrong' });
+    expect(bobFail.status).toBe(401);
+  });
 });

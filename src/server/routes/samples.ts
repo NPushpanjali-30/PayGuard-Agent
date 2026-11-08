@@ -10,7 +10,12 @@ export function createSamplesRouter(): Router {
       title: s.title,
       category: s.category,
       label: s.label,
-      rawEmail: s.rawEmail
+      rawEmail: s.rawEmail,
+      attachments: s.attachments?.map(a => ({
+        filename: a.filename,
+        mimeType: a.mimeType,
+        contentBase64: a.contentBase64
+      }))
     }));
     res.json(list);
   });

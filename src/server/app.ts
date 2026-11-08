@@ -15,6 +15,9 @@ import { RealPayPalClient } from '../adapters/paypal/real-paypal-client.js';
 import { GeminiReader } from '../adapters/ai/gemini-reader.js';
 import { GeminiJudge } from '../adapters/ai/gemini-judge.js';
 import { KeywordReader } from '../adapters/ai/keyword-reader.js';
+import { GeminiInvoiceReader } from '../adapters/ai/gemini-invoice-reader.js';
+import { FallbackInvoiceReader } from '../adapters/ai/fallback-invoice-reader.js';
+import { EmailNotifier } from '../adapters/email/email-notifier.js';
 
 // Use Cases
 import { CheckEmailUseCase } from '../application/use-cases/check-email.js';
@@ -22,6 +25,8 @@ import { ApproveProposalUseCase } from '../application/use-cases/approve-proposa
 import { RejectProposalUseCase } from '../application/use-cases/reject-proposal.js';
 import { SyncHistoryUseCase } from '../application/use-cases/sync-history.js';
 import { UpdateVendorPayeeUseCase } from '../application/use-cases/update-vendor-payee.js';
+import { SendConfirmationUseCase } from '../application/use-cases/send-confirmation.js';
+import { ResolveConfirmationUseCase } from '../application/use-cases/resolve-confirmation.js';
 
 // Routers
 import { createAuthRouter } from './routes/auth.js';
@@ -32,6 +37,9 @@ import { createProposalsRouter } from './routes/proposals.js';
 import { createVendorsRouter } from './routes/vendors.js';
 import { createAuditRouter } from './routes/audit.js';
 import { createPayPalWebhookRouter } from './routes/paypal-webhook.js';
+import { createConfirmationsRouter } from './routes/confirmations.js';
+import { createIntakeRouter } from './routes/intake.js';
+import { createBlocklistRouter } from './routes/blocklist.js';
 
 export function createApp(customRepo?: SqliteRepository): Express {
   const app = express();
@@ -54,9 +62,19 @@ export function createApp(customRepo?: SqliteRepository): Express {
   // 2. Cookie Parser with signature secret
   app.use(cookieParser(config.SESSION_SECRET));
 
-  // 3. Body parsers with 100 KB limit
-  app.use(express.json({ limit: '100kb' }));
-  app.use(express.urlencoded({ extended: true, limit: '100kb' }));
+  // 3. Body parsers with 100 KB limit (bypassed for /api/intake which has dedicated 8 MB limit)
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/api/intake')) {
+      return next();
+    }
+    express.json({ limit: '100kb' })(req, res, next);
+  });
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/api/intake')) {
+      return next();
+    }
+    express.urlencoded({ extended: true, limit: '100kb' })(req, res, next);
+  });
   app.use(express.text({ type: 'text/csv', limit: '200kb' }));
 
   // 4. Instantiate Dependencies
@@ -81,12 +99,31 @@ export function createApp(customRepo?: SqliteRepository): Express {
     ? new GeminiJudge(config.GEMINI_API_KEY, config.GEMINI_MODEL)
     : null;
 
+  const invoiceReader = config.isAiEnabled
+    ? new GeminiInvoiceReader(config.GEMINI_API_KEY, config.GEMINI_MODEL)
+    : new FallbackInvoiceReader();
+
   // Use cases
-  const checkEmailUseCase = new CheckEmailUseCase(repository, emailReader, secondOpinionJudge);
+  const emailNotifier = new EmailNotifier({
+    smtpHost: config.SMTP_HOST,
+    smtpPort: config.SMTP_PORT,
+    smtpUser: config.SMTP_USER,
+    smtpPass: config.SMTP_PASS,
+    smtpFrom: config.SMTP_FROM
+  });
+
+  const checkEmailUseCase = new CheckEmailUseCase(
+    repository,
+    emailReader,
+    secondOpinionJudge,
+    invoiceReader
+  );
   const approveProposalUseCase = new ApproveProposalUseCase(repository, payPalClient);
   const rejectProposalUseCase = new RejectProposalUseCase(repository);
   const syncHistoryUseCase = new SyncHistoryUseCase(repository, payPalClient);
   const updateVendorPayeeUseCase = new UpdateVendorPayeeUseCase(repository);
+  const sendConfirmationUseCase = new SendConfirmationUseCase(repository, emailNotifier);
+  const resolveConfirmationUseCase = new ResolveConfirmationUseCase(repository);
 
   // 5. Unauthenticated Public Endpoints
   app.get('/health', (_req: Request, res: Response) => {
@@ -102,6 +139,10 @@ export function createApp(customRepo?: SqliteRepository): Express {
   app.use('/api/auth', createAuthRouter());
   app.use('/api/config', createConfigRouter());
   app.use('/api/paypal/webhook', createPayPalWebhookRouter(payPalClient, repository));
+  // Public confirmation page endpoint (no login required, rate limited)
+  app.use('/api/confirm', createConfirmationsRouter(resolveConfirmationUseCase, emailNotifier));
+  // Zapier / Webhook email intake endpoint (authenticated via X-Intake-Key)
+  app.use('/api/intake', createIntakeRouter(checkEmailUseCase, repository));
 
   // 6. Protected Endpoints (Require login session & CSRF header)
   app.use('/api/samples', requireAuth, createSamplesRouter());
@@ -109,7 +150,13 @@ export function createApp(customRepo?: SqliteRepository): Express {
   app.use(
     '/api/proposals',
     requireAuth,
-    createProposalsRouter(repository, approveProposalUseCase, rejectProposalUseCase, payPalClient)
+    createProposalsRouter(
+      repository,
+      approveProposalUseCase,
+      rejectProposalUseCase,
+      payPalClient,
+      sendConfirmationUseCase
+    )
   );
   app.use(
     '/api/vendors',
@@ -117,6 +164,10 @@ export function createApp(customRepo?: SqliteRepository): Express {
     createVendorsRouter(repository, updateVendorPayeeUseCase, syncHistoryUseCase)
   );
   app.use('/api/audit', requireAuth, createAuditRouter(repository));
+  app.use('/api/blocklist', requireAuth, createBlocklistRouter(repository));
+  app.get('/api/outbox', requireAuth, (_req: Request, res: Response) => {
+    res.json(emailNotifier.getOutbox());
+  });
 
   // 7. Production Static Frontend Serving
   const distPath = path.resolve(process.cwd(), 'dist/web');

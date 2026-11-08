@@ -6,6 +6,7 @@ interface LoginPageProps {
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
+  const [username, setUsername] = useState('approver');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -16,16 +17,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     setLoading(true);
 
     try {
-      await api.login(password);
+      await api.login(password, username.trim() || undefined);
       onLoginSuccess();
     } catch (err: any) {
-      setError(err.message || 'Invalid password');
+      setError(err.message || 'Invalid username or password');
     } finally {
       setLoading(false);
     }
   };
 
   const handleUseDemoPassword = () => {
+    setUsername('approver');
     setPassword('payguard2026!');
   };
 
@@ -60,8 +62,23 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
+            <label className="form-label" htmlFor="app-username">
+              Approver Username
+            </label>
+            <input
+              id="app-username"
+              type="text"
+              className="form-input"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              placeholder="e.g. approver, alice, bob"
+              required
+            />
+          </div>
+
+          <div className="form-group">
             <label className="form-label" htmlFor="app-password">
-              Approver Master Password
+              Password
             </label>
             <input
               id="app-password"
@@ -69,8 +86,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
               className="form-input"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              placeholder="Enter master password..."
-              autoFocus
+              placeholder="Enter password..."
               required
             />
           </div>

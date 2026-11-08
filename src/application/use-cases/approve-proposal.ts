@@ -23,7 +23,7 @@ export class ApproveProposalUseCase {
   async execute(options: ApproveProposalOptions): Promise<PaymentProposal> {
     const { proposalId, actor, policyConfig, actionInput } = options;
 
-    // 1. Run atomic transaction to validate and transition status to PAYING
+    // 1. Run atomic transaction to validate and handle single vs dual approval
     // This prevents double-approve race conditions
     const proposal = this.repository.runInTransaction(() => {
       const p = this.repository.getProposalById(proposalId);
@@ -31,35 +31,143 @@ export class ApproveProposalUseCase {
         throw new Error(`Proposal ${proposalId} not found.`);
       }
 
+      // Check if out-of-band vendor confirmation exists and is confirmed
+      const confirmation = this.repository.getConfirmationByProposalId(proposalId);
+      const isVendorConfirmed = confirmation?.status === 'CONFIRMED';
+
       // Validate all policy limits, callback checkbox, and typed amounts
-      validateApprovalPolicy(p, actionInput, policyConfig);
+      validateApprovalPolicy(p, { ...actionInput, isVendorConfirmed }, policyConfig);
 
-      // Transition to PAYING
-      p.status = 'PAYING';
-      p.callbackConfirmed = Boolean(actionInput.callbackConfirmed);
-      p.callbackNote = actionInput.callbackNote || null;
-      p.approvalNote = actionInput.approvalNote || null;
-      p.updatedAt = new Date().toISOString();
+      // Check historical payments to determine dual-approval requirement and cooling-off
+      const paymentRecords = this.repository.getPaymentRecords();
+      const hasPaymentRecord = paymentRecords.some(
+        rec => rec.payeeEmail.toLowerCase() === p.payee.toLowerCase() && rec.status === 'SUCCESS'
+      );
+      const vendor = p.vendorId ? this.repository.getVendorById(p.vendorId) : null;
+      const hasVendorHistory = Boolean(
+        vendor &&
+        vendor.paymentCount > 0 &&
+        vendor.paypalEmails.some(email => email.toLowerCase() === p.payee.toLowerCase())
+      );
+      const hasPriorPayment = hasPaymentRecord || hasVendorHistory;
+      const dualThreshold = policyConfig.dualApprovalThreshold ?? 1000;
+      const requiresDual = p.requiresDualApproval || p.amount >= dualThreshold || !hasPriorPayment;
 
-      this.repository.saveProposal(p);
+      const now = new Date();
 
-      this.repository.addAuditLog({
-        action: 'PROPOSAL_APPROVED',
-        actor,
-        targetId: p.id,
-        details: {
-          vendorName: p.vendorName,
-          amount: p.amount,
-          payee: p.payee,
-          verdict: p.verdict,
-          callbackNote: p.callbackNote
+      if (requiresDual) {
+        p.requiresDualApproval = true;
+
+        if (!p.firstApprover) {
+          // Approval 1 of 2
+          p.firstApprover = actor;
+          p.firstApprovedAt = now.toISOString();
+
+          // New payee triggers cooling-off period starting from first approval
+          if (!hasPriorPayment && !p.coolingOffUntil) {
+            const coolingHours = policyConfig.coolingOffHours ?? 24;
+            p.coolingOffUntil = new Date(now.getTime() + coolingHours * 3600 * 1000).toISOString();
+          }
+
+          p.callbackConfirmed = Boolean(actionInput.callbackConfirmed);
+          p.callbackNote = actionInput.callbackNote || null;
+          p.approvalNote = actionInput.approvalNote || null;
+          p.updatedAt = now.toISOString();
+
+          this.repository.saveProposal(p);
+
+          this.repository.addAuditLog({
+            action: 'PROPOSAL_FIRST_APPROVAL',
+            actor,
+            targetId: p.id,
+            details: {
+              vendorName: p.vendorName,
+              amount: p.amount,
+              payee: p.payee,
+              progress: '1/2',
+              coolingOffUntil: p.coolingOffUntil
+            }
+          });
+
+          // Remains in PENDING_REVIEW awaiting second approver
+          return p;
+        } else if (!p.secondApprover) {
+          // Approval 2 of 2: Must be a different approver!
+          if (actor.toLowerCase() === p.firstApprover.toLowerCase()) {
+            throw new Error(
+              'Dual approval requires two different approvers. The same user cannot approve twice.'
+            );
+          }
+
+          // Cooling-off verification
+          if (p.coolingOffUntil && !p.coolingOffBypassed) {
+            if (Date.now() < new Date(p.coolingOffUntil).getTime()) {
+              throw new Error(
+                `Payment to new payee is in cooling-off period until ${p.coolingOffUntil}. Disbursement cannot be released yet.`
+              );
+            }
+          }
+
+          // Second approval succeeds -> transition to PAYING
+          p.secondApprover = actor;
+          p.secondApprovedAt = now.toISOString();
+          p.status = 'PAYING';
+          p.updatedAt = now.toISOString();
+
+          this.repository.saveProposal(p);
+
+          this.repository.addAuditLog({
+            action: 'PROPOSAL_APPROVED',
+            actor,
+            targetId: p.id,
+            details: {
+              vendorName: p.vendorName,
+              amount: p.amount,
+              payee: p.payee,
+              firstApprover: p.firstApprover,
+              secondApprover: actor,
+              progress: '2/2'
+            }
+          });
+
+          return p;
+        } else {
+          throw new Error('Proposal has already received both approvals.');
         }
-      });
+      } else {
+        // Single approval suffices
+        p.firstApprover = actor;
+        p.firstApprovedAt = now.toISOString();
+        p.status = 'PAYING';
+        p.callbackConfirmed = Boolean(actionInput.callbackConfirmed);
+        p.callbackNote = actionInput.callbackNote || null;
+        p.approvalNote = actionInput.approvalNote || null;
+        p.updatedAt = now.toISOString();
 
-      return p;
+        this.repository.saveProposal(p);
+
+        this.repository.addAuditLog({
+          action: 'PROPOSAL_APPROVED',
+          actor,
+          targetId: p.id,
+          details: {
+            vendorName: p.vendorName,
+            amount: p.amount,
+            payee: p.payee,
+            verdict: p.verdict,
+            callbackNote: p.callbackNote
+          }
+        });
+
+        return p;
+      }
     });
 
-    // 2. Dispatch Payout through PayPal Client
+    // 2. Dispatch Payout through PayPal Client (only when transitioned to PAYING)
+    if (proposal.status !== 'PAYING') {
+      return proposal;
+    }
+
     try {
       const senderItemId = 'item_' + crypto.randomUUID().slice(0, 8);
       const payoutResult = await this.payPalClient.createPayout({

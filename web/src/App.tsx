@@ -9,24 +9,33 @@ import { CheckEmailPage } from './pages/CheckEmailPage.js';
 import { ProposalDetailPage } from './pages/ProposalDetailPage.js';
 import { VendorsPage } from './pages/VendorsPage.js';
 import { AuditPage } from './pages/AuditPage.js';
+import { ConfirmPage } from './pages/ConfirmPage.js';
+import { OutboxPage } from './pages/OutboxPage.js';
+import { BlocklistPage } from './pages/BlocklistPage.js';
 
 export const App: React.FC = () => {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     return (localStorage.getItem('payguard_theme') as 'light' | 'dark') || 'light';
   });
 
+  const isPublicConfirmPath = window.location.pathname.startsWith('/confirm/');
+
   const checkAuth = async () => {
+    if (isPublicConfirmPath) return;
     try {
       const res = await api.checkAuth();
       setAuthenticated(res.authenticated);
+      setCurrentUser(res.user || null);
       if (res.authenticated) {
         const cfg = await api.getConfig();
         setConfig(cfg);
       }
     } catch {
       setAuthenticated(false);
+      setCurrentUser(null);
     }
   };
 
@@ -50,7 +59,20 @@ export const App: React.FC = () => {
       // Ignore
     }
     setAuthenticated(false);
+    setCurrentUser(null);
   };
+
+  // If user is accessing public confirmation URL, render directly without login
+  if (isPublicConfirmPath) {
+    return (
+      <BrowserRouter>
+        <Routes>
+          <Route path="/confirm/:token" element={<ConfirmPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    );
+  }
 
   if (authenticated === null) {
     return (
@@ -69,6 +91,7 @@ export const App: React.FC = () => {
       <div className="app-container">
         <Navbar
           config={config}
+          user={currentUser}
           onLogout={handleLogout}
           theme={theme}
           onToggleTheme={toggleTheme}
@@ -80,7 +103,10 @@ export const App: React.FC = () => {
             <Route path="/check" element={<CheckEmailPage />} />
             <Route path="/proposals/:id" element={<ProposalDetailPage config={config} />} />
             <Route path="/vendors" element={<VendorsPage />} />
+            <Route path="/outbox" element={<OutboxPage />} />
             <Route path="/audit" element={<AuditPage />} />
+            <Route path="/blocklist" element={<BlocklistPage />} />
+            <Route path="/confirm/:token" element={<ConfirmPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

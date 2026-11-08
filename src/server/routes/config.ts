@@ -12,6 +12,8 @@ export function createConfigRouter(): Router {
       model: config.GEMINI_MODEL,
       approvalLimit: config.APPROVAL_LIMIT,
       hardLimit: config.HARD_LIMIT,
+      dualApprovalThreshold: config.DUAL_APPROVAL_THRESHOLD,
+      demoFastForward: config.DEMO_FAST_FORWARD,
       environment: config.NODE_ENV
     });
   });

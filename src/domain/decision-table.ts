@@ -27,16 +27,10 @@ export function evaluateDecisionTable(
   paymentRequested: boolean,
   flags: Flag[]
 ): DecisionResult {
-  if (!paymentRequested) {
-    return {
-      verdict: 'CLEAR',
-      reason: 'No payment request detected in email. Routine correspondence.'
-    };
-  }
-
   const highFlags = flags.filter(f => f.severity === 'HIGH');
   const mediumFlags = flags.filter(f => f.severity === 'MEDIUM');
   const lowFlags = flags.filter(f => f.severity === 'LOW');
+  const hasUnreadAttachment = flags.some(f => f.id === 'attachment_not_read');
 
   // Specific HOLD conditions
   const hasPayeeChange = flags.some(f => f.id === 'payee_change' || f.id === 'bank_change');
@@ -53,6 +47,21 @@ export function evaluateDecisionTable(
     return {
       verdict: 'HOLD',
       reason: `High risk detected: ${Array.from(new Set(reasons)).join('; ')}. Immediate human out-of-band verification required.`
+    };
+  }
+
+  // Unreadable attachment safety rule: can never be CLEAR, must be CHECK
+  if (hasUnreadAttachment) {
+    return {
+      verdict: 'CHECK',
+      reason: 'Verification required: Email contains attachment that could not be verified by AI reader.'
+    };
+  }
+
+  if (!paymentRequested) {
+    return {
+      verdict: 'CLEAR',
+      reason: 'No payment request detected in email. Routine correspondence.'
     };
   }
 

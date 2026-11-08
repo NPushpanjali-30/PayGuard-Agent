@@ -3,6 +3,8 @@ import { PaymentProposal, Verdict } from './types.js';
 export interface PolicyConfig {
   approvalLimit: number; // e.g., 500 USD
   hardLimit: number;     // e.g., 5000 USD
+  dualApprovalThreshold?: number; // e.g., 1000 USD
+  coolingOffHours?: number;       // e.g., 24 hours
 }
 
 export interface ApprovalActionInput {
@@ -10,6 +12,7 @@ export interface ApprovalActionInput {
   callbackNote?: string;
   typedAmountConfirmation?: number;
   approvalNote?: string;
+  isVendorConfirmed?: boolean;
 }
 
 export interface PolicyEvaluationResult {
@@ -65,17 +68,22 @@ export function validateApprovalPolicy(
     );
   }
 
-  // 3. HOLD proposals mandate callback confirmation and note
+  // 3. HOLD proposals mandate either out-of-band vendor confirmation OR callback confirmation and note
   if (proposal.verdict === 'HOLD' || proposal.requiresCallbackCheck) {
-    if (!input.callbackConfirmed) {
-      throw new Error(
-        'For HOLD proposals, you must confirm: "I called the verified number on file" before approving.'
-      );
-    }
-    if (!input.callbackNote || input.callbackNote.trim().length < 5) {
-      throw new Error(
-        'A descriptive callback note (min 5 characters) is required explaining who verified the invoice.'
-      );
+    const hasVendorConfirmed = Boolean(input.isVendorConfirmed);
+    const hasCallback = Boolean(input.callbackConfirmed && input.callbackNote && input.callbackNote.trim().length >= 5);
+
+    if (!hasVendorConfirmed && !hasCallback) {
+      if (!input.callbackConfirmed) {
+        throw new Error(
+          'For HOLD proposals, out-of-band vendor confirmation must be CONFIRMED or you must confirm: "I called the verified number on file" before approving.'
+        );
+      }
+      if (!input.callbackNote || input.callbackNote.trim().length < 5) {
+        throw new Error(
+          'A descriptive callback note (min 5 characters) is required explaining who verified the invoice.'
+        );
+      }
     }
   }
 

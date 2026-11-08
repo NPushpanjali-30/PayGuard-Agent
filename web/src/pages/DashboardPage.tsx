@@ -119,6 +119,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ config }) => {
                   <th>Vendor</th>
                   <th>Amount</th>
                   <th>Payee (On File)</th>
+                  <th>Source</th>
                   <th>Verdict</th>
                   <th>Status</th>
                   <th>Created</th>
@@ -136,6 +137,34 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ config }) => {
                     </td>
                     <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
                       {p.payee}
+                    </td>
+                    <td>
+                      <span
+                        className="badge"
+                        style={{
+                          fontSize: '0.75rem',
+                          backgroundColor:
+                            p.source === 'zapier_intake'
+                              ? '#e0e7ff'
+                              : p.source === 'mcp'
+                              ? '#ede9fe'
+                              : 'var(--bg-subtle, #f1f5f9)',
+                          color:
+                            p.source === 'zapier_intake'
+                              ? '#4338ca'
+                              : p.source === 'mcp'
+                              ? '#6d28d9'
+                              : 'var(--text-muted, #475569)',
+                          fontWeight: 600,
+                          border: '1px solid currentColor'
+                        }}
+                      >
+                        {p.source === 'zapier_intake'
+                          ? '⚡ Zapier/Intake'
+                          : p.source === 'mcp'
+                          ? '🤖 MCP'
+                          : '👤 Manual'}
+                      </span>
                     </td>
                     <td>
                       <span

@@ -24,6 +24,7 @@ export function createVendorsRouter(
   const addVendorSchema = z.object({
     name: z.string().min(2, 'Vendor name is required'),
     payeeEmail: z.string().email('Valid PayPal email is required'),
+    contactEmail: z.string().email('Valid contact email is required').optional().nullable().or(z.literal('')),
     domains: z.array(z.string()).optional().default([]),
     phone: z.string().optional().nullable(),
     typicalAmount: z.number().nonnegative().optional().default(0)
@@ -46,12 +47,17 @@ export function createVendorsRouter(
         }
       }
 
+      const contactEmail = parsed.data.contactEmail && parsed.data.contactEmail.trim().length > 0
+        ? parsed.data.contactEmail.trim().toLowerCase()
+        : null;
+
       const vendor: Vendor = {
         id: 'ven_' + crypto.randomUUID().slice(0, 10),
         name: parsed.data.name,
         paypalEmails: [parsed.data.payeeEmail.toLowerCase()],
         domains: domainList,
         phone: parsed.data.phone || null,
+        contactEmail,
         typicalAmount: parsed.data.typicalAmount,
         paymentCount: 1,
         source: 'manual',
@@ -63,9 +69,9 @@ export function createVendorsRouter(
 
       repository.addAuditLog({
         action: 'VENDOR_CREATED',
-        actor: 'approver',
+        actor: req.actor || 'approver',
         targetId: vendor.id,
-        details: { name: vendor.name, payee: vendor.paypalEmails[0] }
+        details: { name: vendor.name, payee: vendor.paypalEmails[0], contactEmail }
       });
 
       res.status(201).json(vendor);
@@ -91,9 +97,39 @@ export function createVendorsRouter(
       const updated = updateVendorPayeeUseCase.execute({
         vendorId: req.params.id,
         newPayeeEmail: parsed.data.newPayee,
-        actor: 'approver',
+        actor: req.actor || 'approver',
         reason: parsed.data.reason
       });
+
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // 3b. Update verified contact email on file
+  const updateContactEmailSchema = z.object({
+    contactEmail: z.string().email('Valid contact email is required').nullable().or(z.literal(''))
+  });
+
+  router.put('/:id/contact-email', (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const parsed = updateContactEmailSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: 'Validation failed', details: parsed.error.format() });
+        return;
+      }
+
+      const cleanEmail = parsed.data.contactEmail && parsed.data.contactEmail.trim().length > 0
+        ? parsed.data.contactEmail.trim().toLowerCase()
+        : null;
+
+      repository.updateVendorContactEmail(req.params.id, cleanEmail, req.actor || 'approver');
+      const updated = repository.getVendorById(req.params.id);
+      if (!updated) {
+        res.status(404).json({ error: 'Vendor not found' });
+        return;
+      }
 
       res.json(updated);
     } catch (err: any) {
@@ -133,7 +169,7 @@ export function createVendorsRouter(
 
       repository.addAuditLog({
         action: 'VENDORS_IMPORTED_CSV',
-        actor: 'approver',
+        actor: req.actor || 'approver',
         targetId: null,
         details: { count: result.importedCount, errors: result.errors }
       });
@@ -145,9 +181,9 @@ export function createVendorsRouter(
   });
 
   // 6. Sync history from PayPal
-  router.post('/sync-paypal', async (_req: Request, res: Response, next: NextFunction) => {
+  router.post('/sync-paypal', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const syncResult = await syncHistoryUseCase.execute('approver');
+      const syncResult = await syncHistoryUseCase.execute(req.actor || 'approver');
       res.json(syncResult);
     } catch (err) {
       next(err);

@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "payguard-agent": {
+      "command": "npx",
+      "args": ["tsx", "src/mcp/server.ts"],
+      "env": {
+        "PAYPAL_MODE": "mock",
+        "APP_BASE_URL": "http://localhost:3000",
+        "APPROVAL_LIMIT": "500",
+        "HARD_LIMIT": "5000"
+      }
+    }
+  }
+}

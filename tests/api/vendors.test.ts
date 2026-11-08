@@ -114,4 +114,42 @@ describe('Vendors Management API Endpoints', () => {
     expect(syncRes.status).toBe(200);
     expect(syncRes.body.message).toBeDefined();
   });
+
+  it('supports creating and updating vendor verified contactEmail with audit logging', async () => {
+    const createRes = await request(app)
+      .post('/api/vendors')
+      .set('Cookie', authCookie)
+      .set('X-PayGuard-Request', '1')
+      .send({
+        name: 'Contact Vendor Inc',
+        payeeEmail: 'billing@contactvendor.com',
+        contactEmail: 'security@contactvendor.com',
+        domains: ['contactvendor.com']
+      });
+
+    expect(createRes.status).toBe(201);
+    expect(createRes.body.contactEmail).toBe('security@contactvendor.com');
+
+    const vendorId = createRes.body.id;
+
+    // Update contact email
+    const updateRes = await request(app)
+      .put(`/api/vendors/${vendorId}/contact-email`)
+      .set('Cookie', authCookie)
+      .set('X-PayGuard-Request', '1')
+      .send({ contactEmail: 'new-contact@contactvendor.com' });
+
+    expect(updateRes.status).toBe(200);
+    expect(updateRes.body.contactEmail).toBe('new-contact@contactvendor.com');
+
+    // Verify audit log
+    const auditRes = await request(app)
+      .get('/api/audit')
+      .set('Cookie', authCookie);
+
+    expect(auditRes.status).toBe(200);
+    const log = auditRes.body.find((l: any) => l.action === 'VENDOR_CONTACT_EMAIL_UPDATED');
+    expect(log).toBeDefined();
+    expect(log.details.newContactEmail).toBe('new-contact@contactvendor.com');
+  });
 });

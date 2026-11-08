@@ -22,3 +22,11 @@ export const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 });
+
+export const intakeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: { error: 'Too many email intake requests. Please wait a few minutes before trying again.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});

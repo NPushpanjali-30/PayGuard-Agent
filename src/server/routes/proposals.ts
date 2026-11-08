@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { IRepository } from '../../application/ports/repository.js';
 import { ApproveProposalUseCase } from '../../application/use-cases/approve-proposal.js';
 import { RejectProposalUseCase } from '../../application/use-cases/reject-proposal.js';
+import { SendConfirmationUseCase } from '../../application/use-cases/send-confirmation.js';
 import { IPayPalClient } from '../../application/ports/paypal-client.js';
 import { approveLimiter } from '../middleware/rate-limit.js';
 import { config } from '../config.js';
@@ -11,7 +12,8 @@ export function createProposalsRouter(
   repository: IRepository,
   approveUseCase: ApproveProposalUseCase,
   rejectUseCase: RejectProposalUseCase,
-  payPalClient: IPayPalClient
+  payPalClient: IPayPalClient,
+  sendConfirmationUseCase?: SendConfirmationUseCase
 ): Router {
   const router = Router();
 
@@ -28,7 +30,13 @@ export function createProposalsRouter(
       res.status(404).json({ error: `Proposal ${req.params.id} not found.` });
       return;
     }
-    res.json(proposal);
+    const confirmation = repository.getConfirmationByProposalId(req.params.id);
+    const vendor = proposal.vendorId ? repository.getVendorById(proposal.vendorId) : null;
+    res.json({
+      ...proposal,
+      confirmation,
+      vendorContactEmail: vendor?.contactEmail || null
+    });
   });
 
   // 3. Approve proposal
@@ -49,10 +57,12 @@ export function createProposalsRouter(
 
       const proposal = await approveUseCase.execute({
         proposalId: req.params.id,
-        actor: 'approver',
+        actor: req.actor || 'approver',
         policyConfig: {
           approvalLimit: config.APPROVAL_LIMIT,
-          hardLimit: config.HARD_LIMIT
+          hardLimit: config.HARD_LIMIT,
+          dualApprovalThreshold: config.DUAL_APPROVAL_THRESHOLD,
+          coolingOffHours: config.NEW_PAYEE_COOLING_OFF_HOURS
         },
         actionInput: parsed.data
       });
@@ -65,7 +75,9 @@ export function createProposalsRouter(
 
   // 4. Reject proposal
   const rejectSchema = z.object({
-    reason: z.string().min(3, 'A descriptive rejection reason is required (min 3 characters)')
+    reason: z.string().min(3, 'A descriptive rejection reason is required (min 3 characters)'),
+    blockSenderDomain: z.boolean().optional(),
+    blockPayeeIdentifiers: z.boolean().optional()
   });
 
   router.post('/:id/reject', async (req: Request, res: Response, next: NextFunction) => {
@@ -78,8 +90,10 @@ export function createProposalsRouter(
 
       const proposal = await rejectUseCase.execute({
         proposalId: req.params.id,
-        actor: 'approver',
-        reason: parsed.data.reason
+        actor: req.actor || 'approver',
+        reason: parsed.data.reason,
+        blockSenderDomain: parsed.data.blockSenderDomain,
+        blockPayeeIdentifiers: parsed.data.blockPayeeIdentifiers
       });
 
       res.json(proposal);
@@ -132,6 +146,64 @@ export function createProposalsRouter(
       res.json(proposal);
     } catch (err) {
       next(err);
+    }
+  });
+
+  // 5. Send out-of-band confirmation to vendor contact on file
+  router.post('/:id/send-confirmation', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!sendConfirmationUseCase) {
+        res.status(500).json({ error: 'Send confirmation use case is not configured.' });
+        return;
+      }
+
+      const result = await sendConfirmationUseCase.execute({
+        proposalId: req.params.id,
+        actor: req.actor || 'approver',
+        baseUrl: config.APP_BASE_URL,
+        ttlHours: config.CONFIRMATION_TTL_HOURS
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to send confirmation' });
+    }
+  });
+
+  // 6. Demo fast-forward: bypass cooling-off period (only when DEMO_FAST_FORWARD=true)
+  router.post('/:id/bypass-cooling-off', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!config.DEMO_FAST_FORWARD) {
+        res.status(403).json({
+          error:
+            'Demo fast-forward is disabled. Set DEMO_FAST_FORWARD=true to enable skipping the cooling-off period.'
+        });
+        return;
+      }
+
+      const proposal = repository.getProposalById(req.params.id);
+      if (!proposal) {
+        res.status(404).json({ error: `Proposal ${req.params.id} not found.` });
+        return;
+      }
+
+      proposal.coolingOffBypassed = true;
+      proposal.updatedAt = new Date().toISOString();
+      repository.saveProposal(proposal);
+
+      repository.addAuditLog({
+        action: 'COOLING_OFF_BYPASSED',
+        actor: req.actor || 'approver',
+        targetId: proposal.id,
+        details: {
+          coolingOffUntil: proposal.coolingOffUntil,
+          reason: 'Demo: fast-forward skip waiting invoked'
+        }
+      });
+
+      res.json(proposal);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to bypass cooling-off period' });
     }
   });
 
