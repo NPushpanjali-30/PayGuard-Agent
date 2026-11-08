@@ -23,6 +23,8 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
   const [typedAmount, setTypedAmount] = useState('');
   const [approvalNote, setApprovalNote] = useState('');
   const [submittingApproval, setSubmittingApproval] = useState(false);
+  const [submittingSimulation, setSubmittingSimulation] = useState(false);
+  const [countryRestrictedError, setCountryRestrictedError] = useState<{ message: string; debugId?: string } | null>(null);
 
   // Rejection Form State
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -159,13 +161,15 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
   const handleApprove = async () => {
     if (!canApprove) return;
     setError(null);
+    setCountryRestrictedError(null);
     setSubmittingApproval(true);
 
     try {
       const updated = await api.approveProposal(proposal.id, {
         callbackConfirmed: callbackChecked,
         callbackNote: callbackNote.trim(),
-        typedAmountConfirmation: exceedsApprovalLimit ? parseFloat(typedAmount) : undefined,
+        typedAmountConfirmation:
+          exceedsApprovalLimit && typedAmount.trim() ? parseFloat(typedAmount) : undefined,
         approvalNote: approvalNote.trim()
       });
 
@@ -176,9 +180,43 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
         setSuccessMsg(`Payout batch ${updated.paypalBatchId || ''} submitted to PayPal.`);
       }
     } catch (err: any) {
-      setError(err.message || 'Approval failed');
+      if (
+        err.status === 403 ||
+        err.countryRestricted ||
+        err.name === 'PAYOUT_NOT_AVAILABLE' ||
+        err.message?.includes('PAYOUT_NOT_AVAILABLE')
+      ) {
+        const debugId =
+          err.debug_id ||
+          err.data?.debug_id ||
+          err.message?.match(/debug_id["':\s]+([a-zA-Z0-9]+)/i)?.[1];
+        setCountryRestrictedError({
+          message:
+            'PayPal rejected this payout: The sandbox sender account is registered in a country not permitted to send payouts (403 PAYOUT_NOT_AVAILABLE).',
+          debugId
+        });
+        await loadProposal();
+      } else {
+        setError(err.message || 'Approval failed');
+      }
     } finally {
       setSubmittingApproval(false);
+    }
+  };
+
+  const handleSimulatePayout = async () => {
+    if (!proposal) return;
+    setError(null);
+    setSubmittingSimulation(true);
+    try {
+      const updated = await api.simulatePayout(proposal.id);
+      setProposal(updated);
+      setCountryRestrictedError(null);
+      setSuccessMsg('Simulated payout executed successfully in Mock mode (Simulated).');
+    } catch (err: any) {
+      setError(err.message || 'Failed to simulate payout');
+    } finally {
+      setSubmittingSimulation(false);
     }
   };
 
@@ -222,7 +260,7 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
             >
               {proposal.verdict}
             </span>
-            <StatusBadge status={proposal.status} />
+            <StatusBadge status={proposal.status} batchId={proposal.paypalBatchId} />
             {proposal.requiresDualApproval && (
               <span
                 className="badge"
@@ -239,6 +277,61 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
           </div>
         </div>
       </div>
+
+      {proposal.status === 'PAID' && proposal.paypalBatchId?.startsWith('SIMULATED-MOCK-') && (
+        <div style={{ padding: '0.85rem 1.25rem', backgroundColor: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 'var(--radius)', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <span style={{ fontSize: '1.5rem' }}>⚡</span>
+          <div>
+            <div style={{ fontWeight: 700, color: '#1e40af' }}>SIMULATED / MOCK PAYOUT (DEMO MODE)</div>
+            <div style={{ fontSize: '0.85rem', color: '#1e3a8a', marginTop: '0.2rem' }}>
+              This payment was completed in Mock mode without sending live funds. PayPal Payout Batch ID: <code>{proposal.paypalBatchId}</code>.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(countryRestrictedError || (proposal.status === 'FAILED' && proposal.rejectionReason?.includes('PAYOUT_NOT_AVAILABLE'))) && (
+        <div style={{ padding: '1.25rem', backgroundColor: '#fef2f2', border: '1px solid #f87171', borderRadius: 'var(--radius)', marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+            <span style={{ fontSize: '1.5rem', lineHeight: 1 }}>🚫</span>
+            <div style={{ flex: 1 }}>
+              <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#991b1b' }}>
+                PayPal Payout Rejected: Sender Account Country Restricted (403 PAYOUT_NOT_AVAILABLE)
+              </h3>
+              <p style={{ margin: '0.5rem 0 0', fontSize: '0.875rem', color: '#7f1d1d' }}>
+                PayPal has rejected this payout because the sender account associated with your REST API credentials is not eligible to send payouts in its registered country.
+              </p>
+              {(countryRestrictedError?.debugId || proposal.rejectionReason?.match(/debug_id:\s*([a-zA-Z0-9]+)/i)?.[1]) && (
+                <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#991b1b' }}>
+                  <strong>PayPal Debug ID:</strong>{' '}
+                  <code style={{ backgroundColor: '#fee2e2', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                    {countryRestrictedError?.debugId || proposal.rejectionReason?.match(/debug_id:\s*([a-zA-Z0-9]+)/i)?.[1]}
+                  </code>
+                </div>
+              )}
+              <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: '#fff', border: '1px solid #fecaca', borderRadius: '4px', fontSize: '0.8rem', color: '#374151' }}>
+                ✓ <strong>Human Approval Preserved:</strong> All approver signatures ({proposal.firstApprover}{proposal.secondApprover ? `, ${proposal.secondApprover}` : ''}) and validation checks remain intact. The proposal is marked <code>FAILED</code> to prevent accidental duplicates.
+              </div>
+              {proposal.status !== 'PAID' && (
+                <div style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
+                    onClick={handleSimulatePayout}
+                    disabled={submittingSimulation}
+                  >
+                    {submittingSimulation ? 'Simulating...' : '⚡ Demonstrate via Mock Payout (Simulated)'}
+                  </button>
+                  <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>
+                    Allows live hackathon evaluation without PayPal outbound payout permissions.
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {successMsg && (
         <div className="badge badge-success" style={{ width: '100%', padding: '0.75rem', marginBottom: '1.25rem' }}>
@@ -267,7 +360,7 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
           </span>
           <span>→</span>
           <span style={{ fontWeight: proposal.status === 'PAID' ? 700 : 400, color: proposal.status === 'PAID' ? 'var(--success)' : 'inherit' }}>
-            3. PAID
+            3. {proposal.paypalBatchId?.startsWith('SIMULATED-MOCK-') ? 'PAID (Simulated)' : 'PAID'}
           </span>
           {proposal.paypalBatchId && (
             <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--primary)' }}>
@@ -693,7 +786,7 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
               <div style={{ padding: '1rem', backgroundColor: 'var(--bg-subtle)', borderRadius: 'var(--radius)' }}>
                 <p>
                   <strong>Proposal Status: </strong>
-                  <StatusBadge status={proposal.status} />
+                  <StatusBadge status={proposal.status} batchId={proposal.paypalBatchId} />
                 </p>
                 {proposal.approvalNote && (
                   <p style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
@@ -704,6 +797,21 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
                   <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--danger)' }}>
                     <strong>Rejection/Block Reason: </strong> {proposal.rejectionReason}
                   </p>
+                )}
+                {proposal.status === 'FAILED' && proposal.firstApprover && (
+                  <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
+                    <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                      Human approval was verified and recorded. You can complete this transaction using simulated mock payout:
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={handleSimulatePayout}
+                      disabled={submittingSimulation}
+                    >
+                      {submittingSimulation ? 'Simulating...' : '⚡ Demonstrate via Mock Payout (Simulated)'}
+                    </button>
+                  </div>
                 )}
               </div>
             )}

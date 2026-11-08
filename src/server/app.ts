@@ -27,6 +27,7 @@ import { SyncHistoryUseCase } from '../application/use-cases/sync-history.js';
 import { UpdateVendorPayeeUseCase } from '../application/use-cases/update-vendor-payee.js';
 import { SendConfirmationUseCase } from '../application/use-cases/send-confirmation.js';
 import { ResolveConfirmationUseCase } from '../application/use-cases/resolve-confirmation.js';
+import { SimulatePayoutUseCase } from '../application/use-cases/simulate-payout.js';
 
 // Routers
 import { createAuthRouter } from './routes/auth.js';
@@ -41,7 +42,9 @@ import { createConfirmationsRouter } from './routes/confirmations.js';
 import { createIntakeRouter } from './routes/intake.js';
 import { createBlocklistRouter } from './routes/blocklist.js';
 
-export function createApp(customRepo?: SqliteRepository): Express {
+import { IPayPalClient } from '../application/ports/paypal-client.js';
+
+export function createApp(customRepo?: SqliteRepository, customPayPalClient?: IPayPalClient): Express {
   const app = express();
 
   // 1. Security Headers via Helmet
@@ -82,13 +85,14 @@ export function createApp(customRepo?: SqliteRepository): Express {
 
   // PayPal Client selection
   const payPalClient =
-    config.PAYPAL_MODE === 'sandbox' && config.PAYPAL_CLIENT_ID && config.PAYPAL_CLIENT_SECRET
+    customPayPalClient ||
+    (config.PAYPAL_MODE === 'sandbox' && config.PAYPAL_CLIENT_ID && config.PAYPAL_CLIENT_SECRET
       ? new RealPayPalClient(
           config.PAYPAL_CLIENT_ID,
           config.PAYPAL_CLIENT_SECRET,
           config.PAYPAL_WEBHOOK_ID
         )
-      : new MockPayPalClient();
+      : new MockPayPalClient());
 
   // AI Reader selection
   const emailReader = config.isAiEnabled
@@ -124,6 +128,7 @@ export function createApp(customRepo?: SqliteRepository): Express {
   const updateVendorPayeeUseCase = new UpdateVendorPayeeUseCase(repository);
   const sendConfirmationUseCase = new SendConfirmationUseCase(repository, emailNotifier);
   const resolveConfirmationUseCase = new ResolveConfirmationUseCase(repository);
+  const simulatePayoutUseCase = new SimulatePayoutUseCase(repository);
 
   // 5. Unauthenticated Public Endpoints
   app.get('/health', (_req: Request, res: Response) => {
@@ -155,7 +160,8 @@ export function createApp(customRepo?: SqliteRepository): Express {
       approveProposalUseCase,
       rejectProposalUseCase,
       payPalClient,
-      sendConfirmationUseCase
+      sendConfirmationUseCase,
+      simulatePayoutUseCase
     )
   );
   app.use(

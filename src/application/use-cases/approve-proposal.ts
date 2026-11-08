@@ -239,8 +239,20 @@ export class ApproveProposalUseCase {
 
       return proposal;
     } catch (err: any) {
+      const isCountryRestricted =
+        Boolean(err?.isCountryRestricted) ||
+        err?.errorName === 'PAYOUT_NOT_AVAILABLE' ||
+        (typeof err?.message === 'string' && err.message.includes('PAYOUT_NOT_AVAILABLE'));
+
+      const httpStatus = typeof err?.status === 'number' ? err.status : 500;
+      const errorName = err?.errorName || (isCountryRestricted ? 'PAYOUT_NOT_AVAILABLE' : 'PAYMENT_ERROR');
+      const debugId = err?.debugId || null;
+
+      // Preserve existing human approval details, mark payout attempt as FAILED
       proposal.status = 'FAILED';
-      proposal.rejectionReason = err.message;
+      proposal.rejectionReason = isCountryRestricted
+        ? `PayPal Payout Rejected (403 PAYOUT_NOT_AVAILABLE): The PayPal sender account is registered in a country not permitted to send payouts. Debug ID: ${debugId || 'N/A'}`
+        : err.message;
       proposal.updatedAt = new Date().toISOString();
       this.repository.saveProposal(proposal);
 
@@ -249,7 +261,17 @@ export class ApproveProposalUseCase {
         actor,
         targetId: proposal.id,
         details: {
-          error: err.message
+          error: err.message,
+          errorName,
+          httpStatus,
+          debugId,
+          timestamp: new Date().toISOString(),
+          transactionReference: proposal.id,
+          countryRestricted: isCountryRestricted,
+          accountIneligible: isCountryRestricted,
+          senderBatchId: proposal.id,
+          amount: proposal.amount,
+          payee: proposal.payee
         }
       });
 

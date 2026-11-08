@@ -33,13 +33,20 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   if (!response.ok) {
     let errMsg = `Request failed (${response.status})`;
+    let errJson: any = null;
     try {
-      const errJson = await response.json();
-      errMsg = errJson.error || errMsg;
+      errJson = await response.json();
+      errMsg = errJson.error || errJson.message || errMsg;
     } catch {
       // fallback
     }
-    throw new Error(errMsg);
+    const err = new Error(errMsg) as any;
+    err.status = response.status;
+    err.name = errJson?.name;
+    err.debug_id = errJson?.debug_id;
+    err.countryRestricted = Boolean(errJson?.countryRestricted || errJson?.name === 'PAYOUT_NOT_AVAILABLE');
+    err.data = errJson;
+    throw err;
   }
 
   return response.json() as Promise<T>;
@@ -92,6 +99,10 @@ export const api = {
     request<PaymentProposal>(`/proposals/${id}/approve`, {
       method: 'POST',
       body: JSON.stringify(data)
+    }),
+  simulatePayout: (id: string) =>
+    request<PaymentProposal>(`/proposals/${id}/simulate-payout`, {
+      method: 'POST'
     }),
   rejectProposal: (
     id: string,

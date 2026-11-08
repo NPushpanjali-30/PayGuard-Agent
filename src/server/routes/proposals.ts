@@ -4,7 +4,9 @@ import { IRepository } from '../../application/ports/repository.js';
 import { ApproveProposalUseCase } from '../../application/use-cases/approve-proposal.js';
 import { RejectProposalUseCase } from '../../application/use-cases/reject-proposal.js';
 import { SendConfirmationUseCase } from '../../application/use-cases/send-confirmation.js';
+import { SimulatePayoutUseCase } from '../../application/use-cases/simulate-payout.js';
 import { IPayPalClient } from '../../application/ports/paypal-client.js';
+import { PayPalApiError } from '../../adapters/paypal/real-paypal-client.js';
 import { approveLimiter } from '../middleware/rate-limit.js';
 import { config } from '../config.js';
 
@@ -13,7 +15,8 @@ export function createProposalsRouter(
   approveUseCase: ApproveProposalUseCase,
   rejectUseCase: RejectProposalUseCase,
   payPalClient: IPayPalClient,
-  sendConfirmationUseCase?: SendConfirmationUseCase
+  sendConfirmationUseCase?: SendConfirmationUseCase,
+  simulatePayoutUseCase?: SimulatePayoutUseCase
 ): Router {
   const router = Router();
 
@@ -43,7 +46,7 @@ export function createProposalsRouter(
   const approveSchema = z.object({
     callbackConfirmed: z.boolean().optional(),
     callbackNote: z.string().optional(),
-    typedAmountConfirmation: z.number().optional(),
+    typedAmountConfirmation: z.number().nullable().optional(),
     approvalNote: z.string().optional()
   });
 
@@ -64,7 +67,44 @@ export function createProposalsRouter(
           dualApprovalThreshold: config.DUAL_APPROVAL_THRESHOLD,
           coolingOffHours: config.NEW_PAYEE_COOLING_OFF_HOURS
         },
-        actionInput: parsed.data
+        actionInput: {
+          ...parsed.data,
+          typedAmountConfirmation: parsed.data.typedAmountConfirmation ?? undefined
+        }
+      });
+
+      res.json(proposal);
+    } catch (err: any) {
+      if (err instanceof PayPalApiError || err?.isCountryRestricted || err?.errorName === 'PAYOUT_NOT_AVAILABLE') {
+        const rawStatus = typeof err.status === 'number' ? err.status : Number(err.status);
+        const statusCode = !isNaN(rawStatus) && rawStatus >= 400 && rawStatus <= 599 ? rawStatus : 403;
+        res.status(statusCode).json({
+          error: err.message,
+          name: err.errorName || 'PAYOUT_NOT_AVAILABLE',
+          message: 'PayPal has rejected the payout because the sender account is not eligible to send payouts in this country.',
+          debug_id: err.debugId || null,
+          status: statusCode,
+          countryRestricted: Boolean(err.isCountryRestricted || err.errorName === 'PAYOUT_NOT_AVAILABLE'),
+          proposalId: req.params.id
+        });
+        return;
+      }
+
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // 3b. Simulate payout (safe mock fallback for country-restricted accounts or demo)
+  router.post('/:id/simulate-payout', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!simulatePayoutUseCase) {
+        res.status(500).json({ error: 'Simulate payout use case is not configured.' });
+        return;
+      }
+
+      const proposal = await simulatePayoutUseCase.execute({
+        proposalId: req.params.id,
+        actor: req.actor || 'approver'
       });
 
       res.json(proposal);

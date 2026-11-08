@@ -180,7 +180,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ config }) => {
                       </span>
                     </td>
                     <td>
-                      <StatusBadge status={p.status} />
+                      <StatusBadge status={p.status} batchId={p.paypalBatchId} />
                     </td>
                     <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                       {new Date(p.createdAt).toLocaleDateString()} {new Date(p.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

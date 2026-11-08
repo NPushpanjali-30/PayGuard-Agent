@@ -373,7 +373,7 @@ export class SqliteRepository implements IRepository {
       proposal.payee,
       proposal.requestedPayeeInEmail,
       proposal.verdict,
-      JSON.stringify(proposal.flags),
+      JSON.stringify(proposal.flags || []),
       proposal.status,
       proposal.requiresCallbackCheck ? 1 : 0,
       proposal.requiresAmountConfirm ? 1 : 0,

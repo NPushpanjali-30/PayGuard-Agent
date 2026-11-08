@@ -10,6 +10,28 @@ interface CachedToken {
   expiresAtMs: number;
 }
 
+export class PayPalApiError extends Error {
+  public readonly status: number;
+  public readonly errorName: string;
+  public readonly debugId?: string;
+  public readonly details?: any;
+  public readonly isCountryRestricted: boolean;
+
+  constructor(status: number, data: any) {
+    const errorName = data?.name || 'PAYPAL_API_ERROR';
+    const message = data?.message || `PayPal API request failed with status ${status}`;
+    super(`PayPal Payout creation failed (${status}): [${errorName}] ${message}`);
+    this.name = 'PayPalApiError';
+    this.status = status;
+    this.errorName = errorName;
+    this.debugId = data?.debug_id;
+    this.details = data;
+    this.isCountryRestricted =
+      errorName === 'PAYOUT_NOT_AVAILABLE' ||
+      (status === 403 && typeof message === 'string' && message.toLowerCase().includes('country'));
+  }
+}
+
 export class RealPayPalClient implements IPayPalClient {
   public readonly mode = 'sandbox';
   private baseUrl: string;
@@ -112,9 +134,7 @@ export class RealPayPalClient implements IPayPalClient {
           rawResponse: data
         };
       }
-      throw new Error(
-        `PayPal Payout creation failed (${response.status}): ${JSON.stringify(data)}`
-      );
+      throw new PayPalApiError(response.status, data);
     }
 
     const header = data.batch_header || {};
