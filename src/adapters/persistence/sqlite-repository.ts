@@ -296,7 +296,7 @@ export class SqliteRepository implements IRepository {
 
   savePaymentRecord(payment: PaymentRecord): void {
     const stmt = this.db.prepare(`
-      INSERT INTO payments (id, vendor_id, payee_email, amount, currency, status, paypal_batch_id, paid_at)
+           INSERT OR REPLACE INTO payments (id, vendor_id, payee_email, amount, currency, status, paypal_batch_id, paid_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
