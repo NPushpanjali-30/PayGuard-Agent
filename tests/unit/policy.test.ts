@@ -60,6 +60,26 @@ describe('Payment Policy Enforcement', () => {
     }).not.toThrow();
   });
 
+  it('rejects approval when proposal has no verified payee on file', () => {
+    const noPayeeProposal: PaymentProposal = {
+      ...baseProposal,
+      payee: null
+    };
+
+    expect(() => {
+      validateApprovalPolicy(noPayeeProposal, {}, policyConfig);
+    }).toThrow(/No verified payee on file/);
+
+    const emptyPayeeProposal: PaymentProposal = {
+      ...baseProposal,
+      payee: '   '
+    };
+
+    expect(() => {
+      validateApprovalPolicy(emptyPayeeProposal, {}, policyConfig);
+    }).toThrow(/No verified payee on file/);
+  });
+
   it('rejects approval of HOLD proposal without callback confirmation and note', () => {
     const holdProposal: PaymentProposal = {
       ...baseProposal,

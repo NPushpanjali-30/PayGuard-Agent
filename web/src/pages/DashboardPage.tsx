@@ -136,7 +136,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ config }) => {
                       ${p.amount.toFixed(2)} {p.currency}
                     </td>
                     <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
-                      {p.payee}
+                      {p.payee || <span style={{ color: 'var(--danger)', fontStyle: 'italic', fontFamily: 'inherit' }}>No verified payee on file</span>}
                     </td>
                     <td>
                       <span

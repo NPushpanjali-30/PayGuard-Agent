@@ -508,18 +508,36 @@ export const CheckEmailPage: React.FC = () => {
                       <strong>Amount: </strong> ${result.proposal.amount.toFixed(2)} {result.proposal.currency}
                     </p>
                     <p style={{ marginBottom: '0.4rem' }}>
-                      <strong>Payee (Locked to Record): </strong>{' '}
-                      <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--primary)' }}>
-                        {result.proposal.payee}
-                      </code>
+                      <strong>Payee Destination: </strong>{' '}
+                      {result.proposal.payee ? (
+                        <>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>(Locked to Vendor Record): </span>
+                          <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--primary)' }}>
+                            {result.proposal.payee}
+                          </code>
+                        </>
+                      ) : (
+                        <span style={{ color: 'var(--danger)', fontWeight: 600 }}>
+                          No verified payee on file
+                        </span>
+                      )}
                     </p>
                     {result.proposal.requestedPayeeInEmail && (
-                      <p style={{ marginBottom: '0.4rem', color: 'var(--danger)' }}>
-                        <strong>Attacker Requested in Email/PDF: </strong>{' '}
-                        <code style={{ fontFamily: 'var(--font-mono)' }}>
-                          {result.proposal.requestedPayeeInEmail}
-                        </code>
-                      </p>
+                      result.proposal.requestedPayeeInEmail.trim().toLowerCase() !== result.proposal.payee?.trim().toLowerCase() ? (
+                        <p style={{ marginBottom: '0.4rem', color: 'var(--danger)' }}>
+                          <strong>🚨 Email attacker requested: </strong>{' '}
+                          <code style={{ fontFamily: 'var(--font-mono)' }}>
+                            {result.proposal.requestedPayeeInEmail}
+                          </code>
+                        </p>
+                      ) : (
+                        <p style={{ marginBottom: '0.4rem', color: 'var(--success)' }}>
+                          <strong>✅ Matches payee on file: </strong>{' '}
+                          <code style={{ fontFamily: 'var(--font-mono)' }}>
+                            {result.proposal.requestedPayeeInEmail}
+                          </code>
+                        </p>
+                      )
                     )}
                   </div>
 

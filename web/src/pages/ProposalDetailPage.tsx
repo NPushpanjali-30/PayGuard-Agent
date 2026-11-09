@@ -152,6 +152,7 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
   // Validate if approver can click Approve button
   const canApprove =
     proposal.status === 'PENDING_REVIEW' &&
+    Boolean(proposal.payee) &&
     !exceedsHardLimit &&
     !isSameApprover &&
     !isCoolingOffActive &&
@@ -176,8 +177,10 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
       setProposal(updated);
       if (updated.status === 'PENDING_REVIEW' && updated.firstApprover) {
         setSuccessMsg(`First approval recorded by ${updated.firstApprover} (1/2). Awaiting second approver.`);
+      } else if (updated.status === 'PAID') {
+        setSuccessMsg('PayPal confirmed payout status: PAID!');
       } else {
-        setSuccessMsg(`Payout batch ${updated.paypalBatchId || ''} submitted to PayPal.`);
+        setSuccessMsg(`Payout batch ${updated.paypalBatchId || ''} submitted to PayPal. Auto-polling batch status every 3 seconds...`);
       }
     } catch (err: any) {
       if (
@@ -277,6 +280,39 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
           </div>
         </div>
       </div>
+
+      {proposal.status === 'PAID' && (
+        <div
+          data-testid="paid-success-banner"
+          className="badge-success"
+          style={{
+            padding: '1.25rem',
+            backgroundColor: 'var(--success-subtle, #d1fae5)',
+            border: '2px solid var(--success, #10b981)',
+            borderRadius: 'var(--radius)',
+            marginBottom: '1.25rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '1rem'
+          }}
+        >
+          <span style={{ fontSize: '2rem', lineHeight: 1 }}>✅</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: '1.25rem', color: 'var(--success, #059669)', letterSpacing: '0.025em' }}>
+              PAYMENT STATUS: PAID
+            </div>
+            <div style={{ fontSize: '0.9rem', color: 'var(--text, #1f2937)', marginTop: '0.25rem' }}>
+              PayPal confirmed payout status: PAID! Payment of ${proposal.amount.toFixed(2)} {proposal.currency} has been successfully disbursed to {proposal.payee || 'payee'}.
+            </div>
+            {proposal.paypalBatchId && (
+              <div style={{ marginTop: '0.4rem', fontSize: '0.85rem' }}>
+                <strong>PayPal Batch ID:</strong>{' '}
+                <code style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{proposal.paypalBatchId}</code>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {proposal.status === 'PAID' && (proposal.paypalBatchId?.startsWith('SIMULATED-') || proposal.paypalBatchId?.startsWith('MOCK-BATCH-')) && (
         <div style={{ padding: '1rem 1.25rem', backgroundColor: '#eff6ff', border: '2px solid #3b82f6', borderRadius: 'var(--radius)', marginBottom: '1.25rem', display: 'flex', alignItems: 'flex-start', gap: '0.85rem' }}>
@@ -444,10 +480,19 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
                 </span>
               </div>
               <div>
-                <strong>Payee Destination (LOCKED TO VENDOR RECORD):</strong>{' '}
-                <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--success)', marginTop: '0.2rem' }}>
-                  {proposal.payee}
-                </div>
+                <strong>Payee Destination:</strong>{' '}
+                {proposal.payee ? (
+                  <div>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>(Locked to Vendor Record)</span>
+                    <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--success)', marginTop: '0.2rem' }}>
+                      {proposal.payee}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ color: 'var(--danger)', fontWeight: 700, marginTop: '0.2rem' }}>
+                    No verified payee on file
+                  </div>
+                )}
               </div>
 
               {proposal.paypalBatchId && (
@@ -476,17 +521,54 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
                 </div>
               )}
 
-              {proposal.requestedPayeeInEmail && (
-                <div style={{ padding: '0.6rem', backgroundColor: 'var(--danger-subtle)', borderRadius: 'var(--radius)', border: '1px solid var(--danger-border)' }}>
-                  <strong style={{ color: 'var(--danger)' }}>🚨 Email Attacker Requested:</strong>
-                  <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--danger)', wordBreak: 'break-all' }}>
-                    {proposal.requestedPayeeInEmail}
-                  </div>
-                  <p style={{ fontSize: '0.75rem', marginTop: '0.35rem', color: 'var(--text-muted)' }}>
-                    Protection active: The agent refuses to pay this address. Payout will go strictly to the payee on file.
-                  </p>
-                </div>
-              )}
+              {(() => {
+                const requestedPayee = proposal.requestedPayeeInEmail?.trim().toLowerCase();
+                const payeeOnFile = proposal.payee?.trim().toLowerCase();
+                const differs = Boolean(requestedPayee && (!payeeOnFile || requestedPayee !== payeeOnFile));
+
+                if (differs) {
+                  return (
+                    <div
+                      data-testid="email-attacker-requested-box"
+                      style={{
+                        padding: '0.6rem',
+                        backgroundColor: 'var(--danger-subtle)',
+                        borderRadius: 'var(--radius)',
+                        border: '1px solid var(--danger-border)'
+                      }}
+                    >
+                      <strong style={{ color: 'var(--danger)' }}>🚨 Email attacker requested:</strong>
+                      <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--danger)', wordBreak: 'break-all' }}>
+                        {proposal.requestedPayeeInEmail}
+                      </div>
+                      <p style={{ fontSize: '0.75rem', marginTop: '0.35rem', color: 'var(--text-muted)' }}>
+                        Protection active: The agent refuses to pay this address. Payout will go strictly to the payee on file.
+                      </p>
+                    </div>
+                  );
+                } else if (proposal.payee && (!requestedPayee || requestedPayee === payeeOnFile)) {
+                  return (
+                    <div
+                      data-testid="matches-payee-box"
+                      style={{
+                        padding: '0.6rem',
+                        backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                        borderRadius: 'var(--radius)',
+                        border: '1px solid #22c55e'
+                      }}
+                    >
+                      <strong style={{ color: 'var(--success)' }}>✅ Matches payee on file:</strong>
+                      <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--success)', wordBreak: 'break-all' }}>
+                        {proposal.requestedPayeeInEmail || proposal.payee}
+                      </div>
+                      <p style={{ fontSize: '0.75rem', marginTop: '0.35rem', color: 'var(--text-muted)' }}>
+                        Verified: Payee matches verified payee on file.
+                      </p>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
 
               {proposal.requiresDualApproval && (
                 <div style={{ padding: '0.75rem', backgroundColor: 'var(--bg-subtle)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', marginTop: '0.5rem' }}>
@@ -687,6 +769,30 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
               </div>
             ) : proposal.status === 'PENDING_REVIEW' ? (
               <div>
+                {!proposal.payee && (
+                  <div
+                    data-testid="no-payee-alert"
+                    style={{
+                      padding: '1rem',
+                      backgroundColor: '#fef2f2',
+                      border: '1px solid #fecaca',
+                      borderRadius: 'var(--radius)',
+                      marginBottom: '1rem',
+                      color: '#991b1b'
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
+                      <span>🚫</span>
+                      <span>No verified payee on file</span>
+                    </div>
+                    <p style={{ fontSize: '0.85rem', marginBottom: '0.75rem', color: '#7f1d1d' }}>
+                      Approval is disabled because no verified vendor record matches the sender. You must add the vendor on the Vendors page first (audit-logged) before this payout can be approved.
+                    </p>
+                    <Link to="/vendors" className="btn btn-outline" style={{ fontSize: '0.85rem', display: 'inline-block' }}>
+                      Go to Vendors Page to Add Vendor →
+                    </Link>
+                  </div>
+                )}
                 {isSameApprover && (
                   <div style={{ padding: '0.75rem', backgroundColor: '#fef3c7', border: '1px solid #f59e0b', borderRadius: 'var(--radius)', marginBottom: '1rem', color: '#92400e', fontSize: '0.85rem' }}>
                     <strong>Dual Approval Required:</strong> You provided the first approval as <em>{proposal.firstApprover}</em>. To satisfy the two-person control rule, a different approver must provide the second approval.
@@ -804,6 +910,8 @@ export const ProposalDetailPage: React.FC<ProposalDetailPageProps> = ({ config }
                   >
                     {submittingApproval
                       ? 'Submitting...'
+                      : !proposal.payee
+                      ? 'Disabled: No Verified Payee on File'
                       : isSameApprover
                       ? 'Awaiting Second Approver'
                       : isCoolingOffActive

@@ -189,13 +189,14 @@ export class CheckEmailUseCase {
       const currency = aiAnalysis.currency || 'USD';
 
       // CRITICAL SECURITY RULE:
-      // Payee is strictly taken from vendor record on file. NEVER the attacker's requested new payee!
-      let payeeAddress: string;
+      // Payee is strictly taken from vendor record on file. NEVER the attacker's requested new payee,
+      // and NEVER default to the sender's email address if no vendor record matches!
+      let payeeAddress: string | null = null;
       if (matchedVendor && matchedVendor.paypalEmails.length > 0) {
         payeeAddress = matchedVendor.paypalEmails[0];
       } else {
-        // Unknown vendor fallback to sender's own email address
-        payeeAddress = parsedEmail.senderAddress || 'unregistered@vendor.com';
+        // Unknown vendor fallback: Do NOT default to sender's own email address!
+        payeeAddress = null;
       }
 
       const requestedPayee =
@@ -206,13 +207,17 @@ export class CheckEmailUseCase {
       const policyConstraints = evaluatePolicy(amount, decision.verdict, policyConfig);
 
       const paymentRecords = this.repository.getPaymentRecords();
-      const hasPaymentRecord = paymentRecords.some(
-        p => p.payeeEmail.toLowerCase() === payeeAddress.toLowerCase() && p.status === 'SUCCESS'
+      const hasPaymentRecord = Boolean(
+        payeeAddress &&
+        paymentRecords.some(
+          p => p.payeeEmail.toLowerCase() === payeeAddress!.toLowerCase() && p.status === 'SUCCESS'
+        )
       );
       const hasVendorHistory = Boolean(
         matchedVendor &&
         matchedVendor.paymentCount > 0 &&
-        matchedVendor.paypalEmails.some(email => email.toLowerCase() === payeeAddress.toLowerCase())
+        payeeAddress &&
+        matchedVendor.paypalEmails.some(email => email.toLowerCase() === payeeAddress!.toLowerCase())
       );
       const hasPriorPayment = hasPaymentRecord || hasVendorHistory;
       const dualThreshold = (policyConfig as any).dualApprovalThreshold ?? 1000;

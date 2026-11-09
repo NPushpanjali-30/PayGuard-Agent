@@ -56,6 +56,13 @@ export function validateApprovalPolicy(
   input: ApprovalActionInput,
   config: PolicyConfig
 ): void {
+  // 0. Payee on file check: proposal must have a verified payee on file
+  if (!proposal.payee || proposal.payee.trim() === '') {
+    throw new Error(
+      'Cannot approve proposal: No verified payee on file. Please add the vendor on the Vendors page first.'
+    );
+  }
+
   // 1. Status check: proposal must be PENDING_REVIEW
   if (proposal.status !== 'PENDING_REVIEW') {
     throw new Error(`Proposal cannot be approved in status '${proposal.status}' (must be PENDING_REVIEW).`);

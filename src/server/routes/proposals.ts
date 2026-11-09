@@ -7,8 +7,39 @@ import { SendConfirmationUseCase } from '../../application/use-cases/send-confir
 import { SimulatePayoutUseCase } from '../../application/use-cases/simulate-payout.js';
 import { IPayPalClient } from '../../application/ports/paypal-client.js';
 import { PayPalApiError } from '../../adapters/paypal/real-paypal-client.js';
+import { parseRawEmail } from '../../domain/email-parser.js';
 import { approveLimiter } from '../middleware/rate-limit.js';
 import { config } from '../config.js';
+
+function tryLinkProposalToVendor(proposal: any, repository: IRepository, actor = 'system'): boolean {
+  if (proposal.payee && proposal.vendorId) return false;
+  try {
+    const parsedEmail = parseRawEmail(proposal.rawEmail);
+    const matchedVendor = repository.findVendorByDomainOrName(
+      parsedEmail.senderDomain,
+      proposal.vendorName !== 'Unknown Vendor' ? proposal.vendorName : undefined
+    );
+    if (matchedVendor && matchedVendor.paypalEmails.length > 0) {
+      proposal.vendorId = matchedVendor.id;
+      proposal.vendorName = matchedVendor.name;
+      proposal.payee = matchedVendor.paypalEmails[0];
+      proposal.updatedAt = new Date().toISOString();
+      repository.saveProposal(proposal);
+      repository.addAuditLog({
+        action: 'PROPOSAL_VENDOR_LINKED',
+        actor,
+        targetId: proposal.id,
+        details: {
+          vendorId: matchedVendor.id,
+          vendorName: matchedVendor.name,
+          payee: proposal.payee
+        }
+      });
+      return true;
+    }
+  } catch {}
+  return false;
+}
 
 export function createProposalsRouter(
   repository: IRepository,
@@ -29,10 +60,13 @@ export function createProposalsRouter(
 
   // 2. Get proposal by ID
   router.get('/:id', (req: Request, res: Response) => {
-    const proposal = repository.getProposalById(req.params.id);
+    let proposal = repository.getProposalById(req.params.id);
     if (!proposal) {
       res.status(404).json({ error: `Proposal ${req.params.id} not found.` });
       return;
+    }
+    if (!proposal.payee || !proposal.vendorId) {
+      tryLinkProposalToVendor(proposal, repository, req.actor || 'system');
     }
     const confirmation = repository.getConfirmationByProposalId(req.params.id);
     const vendor = proposal.vendorId ? repository.getVendorById(proposal.vendorId) : null;
@@ -84,6 +118,11 @@ export function createProposalsRouter(
       if (!parsed.success) {
         res.status(400).json({ error: 'Invalid input', details: parsed.error.format() });
         return;
+      }
+
+      const existingProposal = repository.getProposalById(req.params.id);
+      if (existingProposal && (!existingProposal.payee || !existingProposal.vendorId)) {
+        tryLinkProposalToVendor(existingProposal, repository, req.actor || 'approver');
       }
 
       const proposal = await approveUseCase.execute({
@@ -197,7 +236,7 @@ export function createProposalsRouter(
               repository.savePaymentRecord({
                 id: 'pay_' + req.params.id,
                 vendorId: proposal.vendorId || 'unregistered',
-                payeeEmail: proposal.payee,
+                payeeEmail: proposal.payee || 'unregistered@payee.com',
                 amount: proposal.amount,
                 currency: proposal.currency,
                 status: 'SUCCESS',

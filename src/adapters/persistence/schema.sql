@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS proposals (
   vendor_name TEXT NOT NULL,
   amount REAL NOT NULL,
   currency TEXT NOT NULL,
-  payee TEXT NOT NULL,
+  payee TEXT,
   requested_payee_in_email TEXT,
   verdict TEXT NOT NULL,
   flags TEXT NOT NULL,

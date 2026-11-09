@@ -40,14 +40,18 @@ export class ApproveProposalUseCase {
 
       // Check historical payments to determine dual-approval requirement and cooling-off
       const paymentRecords = this.repository.getPaymentRecords();
-      const hasPaymentRecord = paymentRecords.some(
-        rec => rec.payeeEmail.toLowerCase() === p.payee.toLowerCase() && rec.status === 'SUCCESS'
+      const hasPaymentRecord = Boolean(
+        p.payee &&
+        paymentRecords.some(
+          rec => rec.payeeEmail.toLowerCase() === p.payee!.toLowerCase() && rec.status === 'SUCCESS'
+        )
       );
       const vendor = p.vendorId ? this.repository.getVendorById(p.vendorId) : null;
       const hasVendorHistory = Boolean(
         vendor &&
         vendor.paymentCount > 0 &&
-        vendor.paypalEmails.some(email => email.toLowerCase() === p.payee.toLowerCase())
+        p.payee &&
+        vendor.paypalEmails.some(email => email.toLowerCase() === p.payee!.toLowerCase())
       );
       const hasPriorPayment = hasPaymentRecord || hasVendorHistory;
       const dualThreshold = policyConfig.dualApprovalThreshold ?? 1000;
@@ -175,7 +179,7 @@ export class ApproveProposalUseCase {
         emailSubject: `Payment from small business for ${proposal.vendorName}`,
         items: [
           {
-            receiver: proposal.payee,
+            receiver: proposal.payee!,
             amount: proposal.amount,
             currency: proposal.currency,
             note: `Invoice settlement for ${proposal.vendorName}`,
@@ -216,7 +220,7 @@ export class ApproveProposalUseCase {
         const paymentRecord: PaymentRecord = {
           id: 'pay_' + crypto.randomUUID().slice(0, 10),
           vendorId: proposal.vendorId || 'unregistered',
-          payeeEmail: proposal.payee,
+          payeeEmail: proposal.payee!,
           amount: proposal.amount,
           currency: proposal.currency,
           status: 'SUCCESS',

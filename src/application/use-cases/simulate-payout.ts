@@ -90,7 +90,7 @@ export class SimulatePayoutUseCase {
       emailSubject: `[SIMULATED] Payment from PayGuard Agent: Invoice #${proposal.id}`,
       items: [
         {
-          receiver: proposal.payee,
+          receiver: proposal.payee || 'unregistered@vendor.com',
           amount: proposal.amount,
           currency: proposal.currency,
           note: `Simulated payout for ${proposal.vendorName}`,
@@ -127,7 +127,7 @@ export class SimulatePayoutUseCase {
       const paymentRecord: PaymentRecord = {
         id: 'pay_sim_' + crypto.randomUUID().slice(0, 10),
         vendorId: latest.vendorId || 'unregistered',
-        payeeEmail: latest.payee,
+        payeeEmail: latest.payee || 'unregistered@vendor.com',
         amount: latest.amount,
         currency: latest.currency,
         status: 'SUCCESS',

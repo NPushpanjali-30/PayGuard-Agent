@@ -49,7 +49,7 @@ export interface PaymentProposal {
   vendorName: string;
   amount: number;
   currency: string;
-  payee: string;
+  payee: string | null;
   requestedPayeeInEmail: string | null;
   verdict: Verdict;
   flags: Flag[];

@@ -185,7 +185,7 @@ export interface PaymentProposal {
   vendorName: string;
   amount: number;
   currency: string;
-  payee: string; // STRICTLY from vendor records on file
+  payee: string | null; // STRICTLY from vendor records on file (null if no vendor record on file)
   requestedPayeeInEmail: string | null;
   verdict: Verdict;
   flags: Flag[];
